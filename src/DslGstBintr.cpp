@@ -140,9 +140,52 @@ namespace DSL
         }
         // Setup the ghost pads for the first and last Elementrs, which would
         // be the same in the case of one element.
-        m_elementrsLinked.front()->AddGhostPadToParent("sink");
-        m_elementrsLinked.back()->AddGhostPadToParent("src");
- 
+        //
+        // level9i splish-6.3-patched — GATE the ghost-pad creation on
+        // whether the terminal element actually has the corresponding
+        // static pad. Without this gate, wrapping a leaf sink (no src
+        // pad, e.g. splitmuxsink, filesink) or a leaf source (no sink
+        // pad) causes `gst_element_get_static_pad` inside
+        // AddGhostPadToParent to return NULL, which flows into
+        // `gst_ghost_pad_new` as `assertion 'GST_IS_PAD (target)' failed`
+        // and the pipeline fails to play.
+        //
+        // Symmetric guard on both ends: skip the ghost when the element
+        // has no static pad of that name. The bin then acts as a leaf
+        // sink / leaf source / mid-pipeline component depending on what
+        // is wrapped. Matched unlink-side skip in UnlinkAll.
+        //
+        // Unref discipline: gst_element_get_static_pad returns a
+        // ref-owned pad — we unref immediately since we only need the
+        // probe result.
+        GstElement* pFirstGstElement = m_elementrsLinked.front()->GetGstElement();
+        GstPad* pFirstSinkPad = gst_element_get_static_pad(pFirstGstElement, "sink");
+        if (pFirstSinkPad != NULL)
+        {
+            gst_object_unref(pFirstSinkPad);
+            m_elementrsLinked.front()->AddGhostPadToParent("sink");
+        }
+        else
+        {
+            LOG_INFO("GstBintr '" << GetName() << "' first element '"
+                << m_elementrsLinked.front()->GetName()
+                << "' has no static sink pad — skipping bin sink ghost (leaf-source shape)");
+        }
+
+        GstElement* pLastGstElement = m_elementrsLinked.back()->GetGstElement();
+        GstPad* pLastSrcPad = gst_element_get_static_pad(pLastGstElement, "src");
+        if (pLastSrcPad != NULL)
+        {
+            gst_object_unref(pLastSrcPad);
+            m_elementrsLinked.back()->AddGhostPadToParent("src");
+        }
+        else
+        {
+            LOG_INFO("GstBintr '" << GetName() << "' last element '"
+                << m_elementrsLinked.back()->GetName()
+                << "' has no static src pad — skipping bin src ghost (leaf-sink shape)");
+        }
+
         m_isLinked = true;
         
         return true;
@@ -164,8 +207,25 @@ namespace DSL
         }
         // Remove the ghost pads for the first and last element, which would
         // be the same in the case of one element.
-        m_elementrsLinked.front()->RemoveGhostPadFromParent("sink");
-        m_elementrsLinked.back()->RemoveGhostPadFromParent("src");
+        //
+        // level9i splish-6.3-patched — matches the LinkAll gate: only
+        // remove the ghost when we actually added one (i.e. when the
+        // terminal element has the corresponding static pad).
+        GstElement* pFirstGstElement = m_elementrsLinked.front()->GetGstElement();
+        GstPad* pFirstSinkPad = gst_element_get_static_pad(pFirstGstElement, "sink");
+        if (pFirstSinkPad != NULL)
+        {
+            gst_object_unref(pFirstSinkPad);
+            m_elementrsLinked.front()->RemoveGhostPadFromParent("sink");
+        }
+
+        GstElement* pLastGstElement = m_elementrsLinked.back()->GetGstElement();
+        GstPad* pLastSrcPad = gst_element_get_static_pad(pLastGstElement, "src");
+        if (pLastSrcPad != NULL)
+        {
+            gst_object_unref(pLastSrcPad);
+            m_elementrsLinked.back()->RemoveGhostPadFromParent("src");
+        }
         
         // iterate through the list of Linked Components, unlinking each
         for (auto const& ivector: m_elementrsLinked)
