@@ -208,22 +208,25 @@ namespace DSL
         // Remove the ghost pads for the first and last element, which would
         // be the same in the case of one element.
         //
-        // level9i splish-6.3-patched — matches the LinkAll gate: only
-        // remove the ghost when we actually added one (i.e. when the
-        // terminal element has the corresponding static pad).
-        GstElement* pFirstGstElement = m_elementrsLinked.front()->GetGstElement();
-        GstPad* pFirstSinkPad = gst_element_get_static_pad(pFirstGstElement, "sink");
-        if (pFirstSinkPad != NULL)
+        // level9i splish-6.3-patched — probe THIS bin for its own
+        // ghost pad (the object RemoveGhostPadFromParent operates on),
+        // NOT the child element. AddGhostPadToParent probes the child
+        // at link time; RemoveGhostPadFromParent probes the parent at
+        // unlink time — asymmetric API. A child-side probe here can
+        // throw during teardown if the child's pad state changed
+        // between link and unlink. The parent's own ghost, if it
+        // exists at all, is exactly what we want to remove.
+        GstPad* pSinkGhost = gst_element_get_static_pad(GetGstElement(), "sink");
+        if (pSinkGhost != NULL)
         {
-            gst_object_unref(pFirstSinkPad);
+            gst_object_unref(pSinkGhost);
             m_elementrsLinked.front()->RemoveGhostPadFromParent("sink");
         }
 
-        GstElement* pLastGstElement = m_elementrsLinked.back()->GetGstElement();
-        GstPad* pLastSrcPad = gst_element_get_static_pad(pLastGstElement, "src");
-        if (pLastSrcPad != NULL)
+        GstPad* pSrcGhost = gst_element_get_static_pad(GetGstElement(), "src");
+        if (pSrcGhost != NULL)
         {
-            gst_object_unref(pLastSrcPad);
+            gst_object_unref(pSrcGhost);
             m_elementrsLinked.back()->RemoveGhostPadFromParent("src");
         }
         
