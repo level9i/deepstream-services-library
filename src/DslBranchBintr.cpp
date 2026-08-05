@@ -760,20 +760,54 @@ namespace DSL
         // If instantiated as a true branch to be linked to a Demuxer/Remuxer/Splitter
         if (!m_isPipeline)
         {
+            // level9i splish-6.3-patched — GATE the ghost-pad creation on
+            // whether the terminal child bin actually exposes the
+            // corresponding pad. Symmetric with the GstBintr::LinkAll
+            // gate: skip the ghost when the child bin has no static pad
+            // of that name (leaf-sink / leaf-source shape). Without this
+            // gate, wrapping a leaf sink (e.g. a Custom Sink bin around
+            // splitmuxsink) as the last child produces
+            // `gst_element_get_static_pad(bin, "src") == NULL` → NULL
+            // flows to `gst_ghost_pad_new` → GStreamer CRITICAL and
+            // pipeline fails to play.
+
             // Elevate the first component's sink-pad as sink-ghost-pad for branch
-            LOG_INFO("Adding sink-ghost-pad to BranchBintr '" <<
-                GetName() << "' for first ChildBintr '" << 
-                m_linkedComponents.front()->GetName() << "'");
-            m_linkedComponents.front()->AddGhostPadToParent("sink");
-            
+            GstElement* pFirstGstElement = m_linkedComponents.front()->GetGstElement();
+            GstPad* pFirstSinkPad = gst_element_get_static_pad(pFirstGstElement, "sink");
+            if (pFirstSinkPad != NULL)
+            {
+                gst_object_unref(pFirstSinkPad);
+                LOG_INFO("Adding sink-ghost-pad to BranchBintr '" <<
+                    GetName() << "' for first ChildBintr '" <<
+                    m_linkedComponents.front()->GetName() << "'");
+                m_linkedComponents.front()->AddGhostPadToParent("sink");
+            }
+            else
+            {
+                LOG_INFO("BranchBintr '" << GetName() << "' first child '"
+                    << m_linkedComponents.front()->GetName()
+                    << "' has no static sink pad — skipping branch sink ghost (leaf-source shape)");
+            }
+
             if (!m_pDemuxerBintr and !m_pSplitterBintr and !m_pMultiSinksBintr)
             {
-                LOG_INFO("Adding sink-ghost-pad to BranchBintr '" <<
-                    GetName() << "' for last ChildBintr '" << 
-                    m_linkedComponents.back()->GetName() << "'");
-
                 // Elevate the last component's src-pad as src-ghost-pad for branch
-                m_linkedComponents.back()->AddGhostPadToParent("src");
+                GstElement* pLastGstElement = m_linkedComponents.back()->GetGstElement();
+                GstPad* pLastSrcPad = gst_element_get_static_pad(pLastGstElement, "src");
+                if (pLastSrcPad != NULL)
+                {
+                    gst_object_unref(pLastSrcPad);
+                    LOG_INFO("Adding src-ghost-pad to BranchBintr '" <<
+                        GetName() << "' for last ChildBintr '" <<
+                        m_linkedComponents.back()->GetName() << "'");
+                    m_linkedComponents.back()->AddGhostPadToParent("src");
+                }
+                else
+                {
+                    LOG_INFO("BranchBintr '" << GetName() << "' last child '"
+                        << m_linkedComponents.back()->GetName()
+                        << "' has no static src pad — skipping branch src ghost (leaf-sink shape)");
+                }
             }
         }
         return true;
@@ -1090,19 +1124,36 @@ namespace DSL
         // If instantiated as a true branch and therefore linked to a Demuxer/Splitter
         if (!m_isPipeline)
         {
-            LOG_INFO("Removing sink-ghost-pad from BranchBintr '" <<
-                GetName() << "' for first ChildBintr '" << 
-                m_linkedComponents.front()->GetName() << "'");
-                
-            m_linkedComponents.front()->RemoveGhostPadFromParent("sink");
-            
+            // level9i splish-6.3-patched — probe THIS branch's bin for
+            // its own ghost pad (the object RemoveGhostPadFromParent
+            // operates on), NOT the child. AddGhostPadToParent probes
+            // the child at link time; RemoveGhostPadFromParent probes
+            // the parent at unlink time — asymmetric API. A child-side
+            // probe here can throw during teardown if the child's pad
+            // state changed between link and unlink. The parent's own
+            // ghost, if it exists at all, is exactly what we want to
+            // remove.
+            GstPad* pSinkGhost = gst_element_get_static_pad(GetGstElement(), "sink");
+            if (pSinkGhost != NULL)
+            {
+                gst_object_unref(pSinkGhost);
+                LOG_INFO("Removing sink-ghost-pad from BranchBintr '" <<
+                    GetName() << "' for first ChildBintr '" <<
+                    m_linkedComponents.front()->GetName() << "'");
+                m_linkedComponents.front()->RemoveGhostPadFromParent("sink");
+            }
+
             if (!m_pDemuxerBintr and !m_pSplitterBintr and !m_pMultiSinksBintr)
             {
-                LOG_INFO("Removing src-ghost-pad from BranchBintr '" <<
-                    GetName() << "' for last ChildBintr '" << 
-                    m_linkedComponents.back()->GetName() << "'");
-
-                m_linkedComponents.back()->RemoveGhostPadFromParent("src");
+                GstPad* pSrcGhost = gst_element_get_static_pad(GetGstElement(), "src");
+                if (pSrcGhost != NULL)
+                {
+                    gst_object_unref(pSrcGhost);
+                    LOG_INFO("Removing src-ghost-pad from BranchBintr '" <<
+                        GetName() << "' for last ChildBintr '" <<
+                        m_linkedComponents.back()->GetName() << "'");
+                    m_linkedComponents.back()->RemoveGhostPadFromParent("src");
+                }
             }
         }
         
