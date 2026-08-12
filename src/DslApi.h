@@ -9873,6 +9873,33 @@ DslReturnType dsl_info_log_file_set_with_ts(const wchar_t* file_path);
 DslReturnType dsl_info_log_function_restore();
 
 
+// ---------------------------------------------------------------------------
+// FFI shims — thin `dsl_*` wrappers exposing selected GStreamer / DeepStream
+// helper functions under DSL's symbol namespace so external FFI consumers
+// (e.g. @level9i/libdsl-ffi) can call them via `dlsym` on the libdsl.so
+// handle without depending on the DT_NEEDED chain of transitively-linked
+// libraries resolving cleanly at call time.
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Thin shim exposing `gst_buffer_get_nvds_batch_meta()` under a
+ * `dsl_*` symbol name for external FFI consumers. Returns the raw
+ * `NvDsBatchMeta *` pointer attached to the given `GstBuffer`, or NULL
+ * if no batch meta is attached (pre-nvstreammux buffers).
+ *
+ * Pointer ownership is unchanged from the underlying call — the returned
+ * pointer is valid only for the duration of the pad-probe callback that
+ * delivered the GstBuffer.
+ *
+ * Added 2026-08-12 for BL-171 (splish LatencyProbe substrate) — see
+ * splish/workspace/docs/design/BL-171-LatencyProbe-batchMeta-ffi-crash.md
+ *
+ * @param[in] gst_buffer raw `GstBuffer *` from a Custom PPH callback
+ * @return raw `NvDsBatchMeta *`, or NULL if none attached or on NULL input
+ */
+void* dsl_gst_buffer_get_nvds_batch_meta(void* gst_buffer);
+
+
 EXTERN_C_END
 
 #endif /* _DSL_API_H */

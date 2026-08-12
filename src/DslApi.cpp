@@ -11621,3 +11621,14 @@ DslReturnType dsl_info_log_function_restore()
     return DSL::Services::GetServices()->InfoLogFunctionRestore();
 }
 
+
+// ---------------------------------------------------------------------------
+// FFI shims — see declarations in DslApi.h for rationale
+// ---------------------------------------------------------------------------
+
+void* dsl_gst_buffer_get_nvds_batch_meta(void* gst_buffer)
+{
+    if (gst_buffer == NULL) return NULL;
+    return (void*) gst_buffer_get_nvds_batch_meta((GstBuffer*) gst_buffer);
+}
+
