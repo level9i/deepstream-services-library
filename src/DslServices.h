@@ -1856,11 +1856,17 @@ namespace DSL {
         DslReturnType PipelineErrorMessageHandlerAdd(const char* name, 
             dsl_error_message_handler_cb handler, void* clientData);
 
-        DslReturnType PipelineErrorMessageHandlerRemove(const char* name, 
+        DslReturnType PipelineErrorMessageHandlerRemove(const char* name,
             dsl_error_message_handler_cb handler);
-            
+
         DslReturnType PipelineErrorMessageLastGet(const char* name,
             std::wstring& source, std::wstring& message);
+
+        DslReturnType PipelineBusMessageHandlerAdd(const char* name,
+            dsl_bus_message_handler_cb handler, void* clientData);
+
+        DslReturnType PipelineBusMessageHandlerRemove(const char* name,
+            dsl_bus_message_handler_cb handler);
                         
         DslReturnType PipelineMainLoopNew(const char* name);
 

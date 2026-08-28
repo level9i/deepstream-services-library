@@ -120,11 +120,30 @@ namespace DSL
          * @return true on successful handler remove, false otherwise.
          */
         bool RemoveErrorMessageHandler(dsl_error_message_handler_cb handler);
-            
+
+        /**
+         * @brief adds a callback to be notified on receipt of a bus message
+         * outside the categories with dedicated typed handlers (ERROR / EOS /
+         * STATE_CHANGED) and outside the internal-noise categories. Fires
+         * for GST_MESSAGE_ELEMENT / APPLICATION / WARNING / INFO. Client
+         * callback is invoked from the main-loop context.
+         * @param[in] handler pointer to the client's function to call
+         * @param[in] clientData opaque pointer to client data passed into the handler.
+         * @return true on successful handler add, false otherwise.
+         */
+        bool AddBusMessageHandler(dsl_bus_message_handler_cb handler, void* clientData);
+
+        /**
+         * @brief removes a previously added bus-message handler callback
+         * @param[in] handler pointer to the client's function to remove
+         * @return true on successful handler remove, false otherwise.
+         */
+        bool RemoveBusMessageHandler(dsl_bus_message_handler_cb handler);
+
         /**
          * @brief handles incoming Message Packets received
          * by the bus watcher callback function
-         * @return true if the message was handled correctly 
+         * @return true if the message was handled correctly
          */
         bool HandleBusWatchMessage(GstMessage* pMessage);
 
@@ -146,9 +165,18 @@ namespace DSL
         /**
          * @brief Timer experation callback function to notify all error-message-handlers of a new error
          * recieved by the bus-watch. Allows notifications to be sent out from the main-loop context.
-         * @return false always to destroy the one-shot timer calling this callback. 
+         * @return false always to destroy the one-shot timer calling this callback.
          */
         int NotifyErrorMessageHandlers();
+
+        /**
+         * @brief Timer expiration callback function to notify all
+         * bus-message-handlers of the last bus message received by the
+         * bus-watch. Allows notifications to be sent out from the main-loop
+         * context rather than the bus thread.
+         * @return false always to destroy the one-shot timer calling this callback.
+         */
+        int NotifyBusMessageHandlers();
 
     protected:
 
@@ -288,11 +316,38 @@ namespace DSL
         std::wstring m_lastErrorSource;
 
         /**
-         * @brief the last error message received by the bus watch. 
+         * @brief the last error message received by the bus watch.
          * Note: in wchar format for client handlers
          */
         std::wstring m_lastErrorMessage;
-        
+
+        /**
+         * @brief map of all currently registered bus-message-handlers
+         * callback functions mapped with the user provided data
+         */
+        std::map<dsl_bus_message_handler_cb, void*>m_busMessageHandlers;
+
+        /**
+         * @brief mutex to protect multiple threads from accessing/updating
+         * last bus message information
+         */
+        DslMutex m_lastBusMessageMutex;
+
+        /**
+         * @brief timer used to execute the bus-message notification thread
+         */
+        uint m_busMessageNotificationTimerId;
+
+        /**
+         * @brief snapshot of the last bus message received by the bus watch,
+         * pending dispatch to registered handlers. Populated by
+         * HandleBusWatchMessage; read by NotifyBusMessageHandlers.
+         */
+        uint32_t m_lastBusMessageType;
+        std::wstring m_lastBusMessageSourceElementName;
+        std::wstring m_lastBusMessageStructureName;
+        std::wstring m_lastBusMessageStructureSerialised;
+
         /**
          * @brief maps a GstState constant value to a string for logging
          */
@@ -315,14 +370,23 @@ namespace DSL
         GstBus* bus, GstMessage* pMessage, gpointer pPipeline);
 
     /**
-     * @brief Timer thread Notification Handler to invoke a Pipelines 
+     * @brief Timer thread Notification Handler to invoke a Pipelines
      * NotifyErrorMessageHandlers() function
-     * @param pPipeline shared pointer to the Pipeline that started the timer so that 
-     * clients can be notified in the timer's experation callback running from the 
+     * @param pPipeline shared pointer to the Pipeline that started the timer so that
+     * clients can be notified in the timer's experation callback running from the
      * main the loop, instead of the bus-watch callback
      * @return false always to self destroy the one-shot timer.
      */
     static int ErrorMessageHandlersNotificationHandler(gpointer pPipeline);
+
+    /**
+     * @brief Timer thread Notification Handler to invoke a Pipelines
+     * NotifyBusMessageHandlers() function. Same purpose as the error
+     * variant — deferred dispatch from the main loop rather than the
+     * bus thread.
+     * @return false always to self destroy the one-shot timer.
+     */
+    static int BusMessageHandlersNotificationHandler(gpointer pPipeline);
 }
 
 #endif //  DSL_PIPELINE_BUS_MGR_H

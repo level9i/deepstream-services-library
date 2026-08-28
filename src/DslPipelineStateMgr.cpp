@@ -276,6 +276,34 @@ namespace DSL
         return true;
     }
     
+    bool PipelineStateMgr::AddBusMessageHandler(dsl_bus_message_handler_cb handler, void* clientData)
+    {
+        LOG_FUNC();
+
+        if (m_busMessageHandlers.find(handler) != m_busMessageHandlers.end())
+        {
+            LOG_ERROR("Pipeline bus-message handler is not unique");
+            return false;
+        }
+        m_busMessageHandlers[handler] = clientData;
+
+        return true;
+    }
+
+    bool PipelineStateMgr::RemoveBusMessageHandler(dsl_bus_message_handler_cb handler)
+    {
+        LOG_FUNC();
+
+        if (m_busMessageHandlers.find(handler) == m_busMessageHandlers.end())
+        {
+            LOG_ERROR("Pipeline bus-message handler was not found");
+            return false;
+        }
+        m_busMessageHandlers.erase(handler);
+
+        return true;
+    }
+
     bool PipelineStateMgr::HandleBusWatchMessage(GstMessage* pMessage)
     {
         LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_busWatchMutex);
@@ -384,7 +412,75 @@ namespace DSL
         default:
             LOG_INFO("Unhandled message type:: " << name);
         }
-        
+
+        // Generic bus-message dispatch — fire registered handlers for the
+        // categories that have no dedicated typed handler. Skips ERROR,
+        // EOS, STATE_CHANGED (already handled above) and noise categories.
+        // Handler dispatch is deferred to the main loop via g_timeout_add
+        // so client callbacks never run on the bus thread.
+        if (m_busMessageHandlers.size())
+        {
+            GstMessageType type = GST_MESSAGE_TYPE(pMessage);
+            if (type == GST_MESSAGE_ELEMENT ||
+                type == GST_MESSAGE_APPLICATION ||
+                type == GST_MESSAGE_WARNING ||
+                type == GST_MESSAGE_INFO)
+            {
+                LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_lastBusMessageMutex);
+
+                m_lastBusMessageType = static_cast<uint32_t>(type);
+
+                const gchar* srcName = pMessage->src ?
+                    GST_OBJECT_NAME(pMessage->src) : NULL;
+                if (srcName)
+                {
+                    std::string cstrSrc(srcName);
+                    m_lastBusMessageSourceElementName =
+                        std::wstring(cstrSrc.begin(), cstrSrc.end());
+                }
+                else
+                {
+                    m_lastBusMessageSourceElementName.clear();
+                }
+
+                const GstStructure* structure = gst_message_get_structure(pMessage);
+                if (structure)
+                {
+                    const gchar* structName = gst_structure_get_name(structure);
+                    if (structName)
+                    {
+                        std::string cstrStructName(structName);
+                        m_lastBusMessageStructureName =
+                            std::wstring(cstrStructName.begin(), cstrStructName.end());
+                    }
+                    else
+                    {
+                        m_lastBusMessageStructureName.clear();
+                    }
+                    gchar* structStr = gst_structure_to_string(structure);
+                    if (structStr)
+                    {
+                        std::string cstrStructStr(structStr);
+                        m_lastBusMessageStructureSerialised =
+                            std::wstring(cstrStructStr.begin(), cstrStructStr.end());
+                        g_free(structStr);
+                    }
+                    else
+                    {
+                        m_lastBusMessageStructureSerialised.clear();
+                    }
+                }
+                else
+                {
+                    m_lastBusMessageStructureName.clear();
+                    m_lastBusMessageStructureSerialised.clear();
+                }
+
+                m_busMessageNotificationTimerId = g_timeout_add(1,
+                    BusMessageHandlersNotificationHandler, this);
+            }
+        }
+
         return true;
     }
 
@@ -536,6 +632,38 @@ namespace DSL
         return false;
     }
 
+    int PipelineStateMgr::NotifyBusMessageHandlers()
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_lastBusMessageMutex);
+
+        // Build a stack-allocated info snapshot from member state. The
+        // wchar_t* pointers are owned by our member wstrings and remain
+        // valid for the duration of this method (mutex held throughout).
+        dsl_bus_message_info info;
+        info.message_type = m_lastBusMessageType;
+        info.source_element_name = m_lastBusMessageSourceElementName.empty()
+            ? NULL : m_lastBusMessageSourceElementName.c_str();
+        info.structure_name = m_lastBusMessageStructureName.empty()
+            ? NULL : m_lastBusMessageStructureName.c_str();
+        info.structure_serialised = m_lastBusMessageStructureSerialised.empty()
+            ? NULL : m_lastBusMessageStructureSerialised.c_str();
+
+        for(auto const& imap: m_busMessageHandlers)
+        {
+            try
+            {
+                imap.first(&info, imap.second);
+            }
+            catch(...)
+            {
+                LOG_ERROR("PipelineStateMgr threw exception calling Client Bus-Message-Handler");
+            }
+        }
+        m_busMessageNotificationTimerId = 0;
+        return false;
+    }
+
     void PipelineStateMgr::_initMaps()
     {
         m_mapPipelineStates[GST_STATE_READY] = "GST_STATE_READY";
@@ -554,5 +682,11 @@ namespace DSL
         return static_cast<PipelineStateMgr*>(pPipeline)->
             NotifyErrorMessageHandlers();
     }
-    
-} // DSL   
+
+    static int BusMessageHandlersNotificationHandler(gpointer pPipeline)
+    {
+        return static_cast<PipelineStateMgr*>(pPipeline)->
+            NotifyBusMessageHandlers();
+    }
+
+} // DSL

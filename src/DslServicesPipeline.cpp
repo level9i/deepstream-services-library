@@ -1330,6 +1330,64 @@ namespace DSL
         }
     }
 
+    DslReturnType Services::PipelineBusMessageHandlerAdd(const char* name,
+        dsl_bus_message_handler_cb handler, void* clientData)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_PIPELINE_NAME_NOT_FOUND(m_pipelines, name);
+
+            if (!m_pipelines[name]->AddBusMessageHandler(handler, clientData))
+            {
+                LOG_ERROR("Pipeline '" << name
+                    << "' failed to add a Bus Message Handler");
+                return DSL_RESULT_PIPELINE_CALLBACK_ADD_FAILED;
+            }
+            LOG_INFO("Pipeline '" << name
+                << "' added Bus Message Handler successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("Pipeline '" << name
+                << "' threw an exception adding a Bus Message Handler");
+            return DSL_RESULT_PIPELINE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::PipelineBusMessageHandlerRemove(const char* name,
+        dsl_bus_message_handler_cb handler)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_PIPELINE_NAME_NOT_FOUND(m_pipelines, name);
+
+            if (!m_pipelines[name]->RemoveBusMessageHandler(handler))
+            {
+                LOG_ERROR("Pipeline '" << name
+                    << "' failed to remove a Bus Message Handler");
+                return DSL_RESULT_PIPELINE_CALLBACK_REMOVE_FAILED;
+            }
+            LOG_INFO("Pipeline '" << name
+                << "' removed Bus Message Handler successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("Pipeline '" << name
+                << "' threw an exception removing a Bus Message Handler");
+            return DSL_RESULT_PIPELINE_THREW_EXCEPTION;
+        }
+    }
+
     DslReturnType Services::PipelineErrorMessageLastGet(const char* name,
         std::wstring& source, std::wstring& message)
     {

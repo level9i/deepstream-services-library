@@ -10590,7 +10590,7 @@ DslReturnType dsl_pipeline_error_message_handler_add(const wchar_t* name,
         PipelineErrorMessageHandlerAdd(cstrName.c_str(), handler, client_data);
 }
 
-DslReturnType dsl_pipeline_error_message_handler_remove(const wchar_t* name, 
+DslReturnType dsl_pipeline_error_message_handler_remove(const wchar_t* name,
     dsl_error_message_handler_cb handler)
 {
     RETURN_IF_PARAM_IS_NULL(name);
@@ -10601,6 +10601,32 @@ DslReturnType dsl_pipeline_error_message_handler_remove(const wchar_t* name,
 
     return DSL::Services::GetServices()->
         PipelineErrorMessageHandlerRemove(cstrName.c_str(), handler);
+}
+
+DslReturnType dsl_pipeline_bus_message_handler_add(const wchar_t* name,
+    dsl_bus_message_handler_cb handler, void* client_data)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(handler);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->
+        PipelineBusMessageHandlerAdd(cstrName.c_str(), handler, client_data);
+}
+
+DslReturnType dsl_pipeline_bus_message_handler_remove(const wchar_t* name,
+    dsl_bus_message_handler_cb handler)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(handler);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->
+        PipelineBusMessageHandlerRemove(cstrName.c_str(), handler);
 }
 
 DslReturnType dsl_pipeline_error_message_last_get(const wchar_t* name, 

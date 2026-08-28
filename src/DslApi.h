@@ -1714,8 +1714,48 @@ typedef void (*dsl_eos_listener_cb)(void* client_data);
  * @param[in] message error parsed from the message data
  * @param[in] client_data opaque pointer to client's data
  */
-typedef void (*dsl_error_message_handler_cb)(const wchar_t* source, 
+typedef void (*dsl_error_message_handler_cb)(const wchar_t* source,
     const wchar_t* message, void* client_data);
+
+/**
+ * @brief Marshalled snapshot of a GStreamer bus message, passed to a
+ * bus-message handler. Owned by DSL for the duration of the callback
+ * invocation only — clients MUST NOT retain any of the wchar_t*
+ * pointers past callback return; copy the strings if long-lived
+ * storage is needed.
+ * @param message_type raw GstMessageType enum value (e.g. GST_MESSAGE_ELEMENT = 0x00000400)
+ * @param source_element_name gst_object_name of GST_MESSAGE_SRC (may be NULL)
+ * @param structure_name gst_structure_get_name of the message's structure (may be NULL for messages without a structure, e.g. INFO)
+ * @param structure_serialised gst_structure_to_string of the message's structure — clients parse if they want structured field access (may be NULL when structure is NULL)
+ */
+typedef struct dsl_bus_message_info
+{
+    uint32_t          message_type;
+    const wchar_t*    source_element_name;
+    const wchar_t*    structure_name;
+    const wchar_t*    structure_serialised;
+} dsl_bus_message_info;
+
+/**
+ * @brief callback typedef for a client bus-message handler. Once added to
+ * a Pipeline, the function will be called on every GST_MESSAGE_ELEMENT,
+ * GST_MESSAGE_APPLICATION, GST_MESSAGE_WARNING, and GST_MESSAGE_INFO
+ * received on the Pipeline bus. Handler is invoked from the main-loop
+ * context (deferred from the bus thread via g_timeout_add).
+ *
+ * Filtered categories — messages of these types are NOT delivered here
+ * because they have dedicated typed handlers or are internal-noise:
+ *   - GST_MESSAGE_ERROR         (use dsl_pipeline_error_message_handler_add)
+ *   - GST_MESSAGE_EOS           (use dsl_pipeline_eos_listener_add)
+ *   - GST_MESSAGE_STATE_CHANGED (use dsl_pipeline_state_change_listener_add)
+ *   - ASYNC_DONE, STREAM_STATUS, QOS, LATENCY, PROGRESS, BUFFERING (noise)
+ *
+ * @param[in] info pointer to a caller-borrowed message-info struct.
+ *   Valid for the duration of the callback only.
+ * @param[in] client_data opaque pointer to client's data as passed at registration
+ */
+typedef void (*dsl_bus_message_handler_cb)(dsl_bus_message_info* info,
+    void* client_data);
 
 /**
  * @brief callback typedef for a client XWindow KeyRelease event handler function. 
@@ -9124,8 +9164,32 @@ DslReturnType dsl_pipeline_error_message_handler_add(const wchar_t* name,
  * @param[in] handler pointer to the client's callback function to remove
  * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_PIPELINE_RESULT on failure.
  */
-DslReturnType dsl_pipeline_error_message_handler_remove(const wchar_t* name, 
+DslReturnType dsl_pipeline_error_message_handler_remove(const wchar_t* name,
     dsl_error_message_handler_cb handler);
+
+/**
+ * @brief Adds a callback to be notified on receipt of a bus message on the
+ * Pipeline's bus, excluding messages already covered by dedicated typed
+ * handlers (ERROR, EOS, STATE_CHANGED) and internal-noise categories. The
+ * callback is invoked from the main-loop context (deferred from the bus
+ * thread), allowing clients to change the state of, or components within,
+ * the Pipeline safely.
+ * @param[in] name name of the pipeline to update
+ * @param[in] handler pointer to the client's callback function to add
+ * @param[in] client_data opaque pointer to client data passed back to the handler function.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_PIPELINE_RESULT on failure.
+ */
+DslReturnType dsl_pipeline_bus_message_handler_add(const wchar_t* name,
+    dsl_bus_message_handler_cb handler, void* client_data);
+
+/**
+ * @brief Removes a callback previously added with dsl_pipeline_bus_message_handler_add
+ * @param[in] name name of the pipeline to update
+ * @param[in] handler pointer to the client's callback function to remove
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_PIPELINE_RESULT on failure.
+ */
+DslReturnType dsl_pipeline_bus_message_handler_remove(const wchar_t* name,
+    dsl_bus_message_handler_cb handler);
 
 /**
  * @brief Gets the last error message received by the Pipeline's bus watcher
