@@ -35,6 +35,8 @@ namespace DSL
         , m_pBusWatch(NULL)
         , m_eosFlag(false)
         , m_errorNotificationTimerId(0)
+        , m_busMessageNotificationTimerId(0)
+        , m_lastBusMessageType(0)
     {
         LOG_FUNC();
 
@@ -49,7 +51,21 @@ namespace DSL
     PipelineStateMgr::~PipelineStateMgr()
     {
         LOG_FUNC();
-        
+
+        // Cancel any pending bus-message notification timer BEFORE the
+        // object dies — a g_timeout_add source outlives its `this` pointer
+        // by design, so a pending 1ms timer that fires post-destruction
+        // dereferences freed memory. Small window in normal operation, but
+        // exactly when a shutdown burst of bus messages coincides with
+        // pipeline destruction the window opens up. The existing
+        // m_errorNotificationTimerId has the same latent race and should
+        // be fixed alongside — separate BL, not this patch.
+        if (m_busMessageNotificationTimerId != 0)
+        {
+            g_source_remove(m_busMessageNotificationTimerId);
+            m_busMessageNotificationTimerId = 0;
+        }
+
         if (m_pMainLoop)
         {
             DeleteMainLoop();
@@ -414,10 +430,37 @@ namespace DSL
         }
 
         // Generic bus-message dispatch — fire registered handlers for the
-        // categories that have no dedicated typed handler. Skips ERROR,
-        // EOS, STATE_CHANGED (already handled above) and noise categories.
-        // Handler dispatch is deferred to the main loop via g_timeout_add
-        // so client callbacks never run on the bus thread.
+        // four categories that have no dedicated typed handler. Handler
+        // dispatch is deferred to the main loop via g_timeout_add so
+        // client callbacks never run on the bus thread.
+        //
+        // Included categories (why each is here):
+        //   GST_MESSAGE_ELEMENT     — element-authored (splitmuxsink-fragment-*,
+        //                             nvv4l2-encoder-QoS-report, etc). The main
+        //                             motivator for this handler existing.
+        //   GST_MESSAGE_APPLICATION — application-injected via gst_element_post_message
+        //                             (custom pipeline instrumentation).
+        //   GST_MESSAGE_WARNING     — non-fatal condition reports; useful
+        //                             observability without needing a dedicated
+        //                             warning-handler API surface.
+        //   GST_MESSAGE_INFO        — informational messages (rarely emitted,
+        //                             included for symmetry with WARNING).
+        //
+        // Excluded categories (why each is out):
+        //   GST_MESSAGE_ERROR         — dedicated dsl_pipeline_error_message_handler_add
+        //   GST_MESSAGE_EOS           — dedicated dsl_pipeline_eos_listener_add
+        //   GST_MESSAGE_STATE_CHANGED — dedicated dsl_pipeline_state_change_listener_add
+        //   GST_MESSAGE_BUFFERING     — dedicated dsl_pipeline_buffering_message_handler
+        //   GST_MESSAGE_QOS           — chatty; per-buffer QoS is not what a
+        //                               generic handler wants to firehose.
+        //   GST_MESSAGE_STREAM_STATUS — internal streaming-thread lifecycle;
+        //                               noise at the pipeline-observation level.
+        //   GST_MESSAGE_ASYNC_DONE    — state-change internal completion;
+        //                               already exposed via state-change listener.
+        //   GST_MESSAGE_LATENCY       — recalculation trigger, not an event
+        //                               to observe.
+        //   GST_MESSAGE_PROGRESS      — long-operation heartbeats, currently unused.
+        //   GST_MESSAGE_DURATION_CHANGED / NEW_CLOCK / TAG — noise for our use.
         if (m_busMessageHandlers.size())
         {
             GstMessageType type = GST_MESSAGE_TYPE(pMessage);
@@ -460,6 +503,14 @@ namespace DSL
                     gchar* structStr = gst_structure_to_string(structure);
                     if (structStr)
                     {
+                        // ⚠️ CAVEAT: byte-to-wchar widening (not a decode) —
+                        // element/structure names are ASCII in practice, but
+                        // structure_serialised carries arbitrary element-authored
+                        // content that CAN include non-ASCII (file paths on
+                        // non-ASCII filesystems, tag payloads with unicode).
+                        // Byte values > 0x7F silently corrupt on this widening.
+                        // Callers who need full unicode fidelity should decode
+                        // from a separate UTF-8 surface (not offered here).
                         std::string cstrStructStr(structStr);
                         m_lastBusMessageStructureSerialised =
                             std::wstring(cstrStructStr.begin(), cstrStructStr.end());
