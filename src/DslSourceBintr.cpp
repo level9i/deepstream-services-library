@@ -4085,5 +4085,715 @@ namespace DSL
         return static_cast<RtspSourceBintr*>(pSource)->
             NotifyClientListeners();
     }
-    
+
+    //*********************************************************************************
+    //*********************************************************************************
+    // XUriSourceBintr — see class-level comment in DslSourceBintr.h and
+    // provenance capture at
+    // splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md
+    // for the reference-app source lines (create_uridecode_src_bin L1285-1410,
+    // cb_newpad L231-270).
+    //*********************************************************************************
+
+    XUriSourceBintr::XUriSourceBintr(const char* name, const char* uri)
+        : ResourceSourceBintr(name, uri)
+        , m_isFullyLinked(false)
+    {
+        LOG_FUNC();
+
+        // Reference-app L1307-1309: a file:/ URI is not a live source.
+        std::string uriStr(uri);
+        m_isLive = (uriStr.rfind("file:/", 0) != 0);
+
+        // Reference-app L1292: uridecodebin as the source element.
+        m_pSourceElement = DSL_ELEMENT_NEW("uridecodebin", name);
+
+        // Reference-app L1310-1312: configure NTP sync only when the
+        // URI is rtsp:// (uridecodebin will use rtspsrc internally).
+        if (uriStr.rfind("rtsp://", 0) == 0)
+        {
+            configure_source_for_ntp_sync(m_pSourceElement->GetGstElement());
+        }
+
+        // Reference-app L1314-1320: uri property + signal connections.
+        m_pSourceElement->SetAttribute("uri", uri);
+        g_signal_connect(m_pSourceElement->GetGObject(), "pad-added",
+            G_CALLBACK(XUriSourceElementOnPadAddedCB), this);
+        g_signal_connect(m_pSourceElement->GetGObject(), "child-added",
+            G_CALLBACK(XUriOnChildAddedCB), this);
+        g_signal_connect(m_pSourceElement->GetGObject(), "source-setup",
+            G_CALLBACK(XUriOnSourceSetupCB), this);
+        g_object_set_data(G_OBJECT(m_pSourceElement->GetGObject()),
+            "source", this);
+
+        // Reference-app L1321: cap_filter is factory-typed as a queue
+        // (misleading name — a shock-absorber ahead of nvvideoconvert).
+        m_pPreVidconvQueue = DSL_ELEMENT_EXT_NEW("queue", name, "pre-vidconv");
+
+        // Reference-app L1362-1378: fakesink + fakesink_queue + tee for
+        // the drain branch (second tee output).
+        m_pTee = DSL_ELEMENT_EXT_NEW("tee", name, "internal");
+        m_pFakeSinkQueue = DSL_ELEMENT_EXT_NEW("queue", name, "fakesink");
+        m_pFakeSink = DSL_ELEMENT_EXT_NEW("fakesink", name, "internal");
+
+        // Reference-app L1396-1397: fakesink properties.
+        m_pFakeSink->SetAttribute("sync", FALSE);
+        m_pFakeSink->SetAttribute("async", FALSE);
+        m_pFakeSink->SetAttribute("enable-last-sample", FALSE);
+
+        LOG_INFO("");
+        LOG_INFO("Initial property values for XUriSourceBintr '" << name << "'");
+        LOG_INFO("  uri     : " << m_uri);
+        LOG_INFO("  is-live : " << m_isLive);
+
+        // Add all elements as children to this Bintr. The base
+        // VideoSourceBintr constructor has already added its own
+        // buffer-out tail (nvvideoconvert + capsfilter + queue with
+        // ghost pad) which LinkAll will link to via LinkToCommon.
+        AddChild(m_pSourceElement);
+        AddChild(m_pTee);
+        AddChild(m_pPreVidconvQueue);
+        AddChild(m_pFakeSinkQueue);
+        AddChild(m_pFakeSink);
+    }
+
+    XUriSourceBintr::~XUriSourceBintr()
+    {
+        LOG_FUNC();
+
+        if (m_isLinked)
+        {
+            UnlinkAll();
+        }
+    }
+
+    bool XUriSourceBintr::SetUri(const char* uri)
+    {
+        LOG_FUNC();
+
+        if (IsLinked())
+        {
+            LOG_ERROR("Unable to set uri for XUriSourceBintr '"
+                << GetName() << "' as it's currently linked");
+            return false;
+        }
+        m_uri.assign(uri);
+        m_pSourceElement->SetAttribute("uri", uri);
+        return true;
+    }
+
+    bool XUriSourceBintr::LinkAll()
+    {
+        LOG_FUNC();
+
+        if (m_isLinked)
+        {
+            LOG_ERROR("XUriSourceBintr '" << GetName()
+                << "' is already in a linked state");
+            return false;
+        }
+
+        // Reference-app L1383: fakesink_queue → fakesink (static link).
+        if (!m_pFakeSinkQueue->LinkToSink(m_pFakeSink))
+        {
+            LOG_ERROR("Failed to link fakesink_queue → fakesink for "
+                "XUriSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        // Reference-app L1390: tee.src_%u → pre_vidconv_queue.sink.
+        if (!m_pPreVidconvQueue->LinkToSourceTee(m_pTee, "src_%u"))
+        {
+            LOG_ERROR("Failed to link tee → pre_vidconv_queue for "
+                "XUriSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        // Reference-app L1392-1393 (superset): pre_vidconv_queue →
+        // DSL common tail (nvvideoconvert + [nvvideorate] + capsfilter
+        // + queue + ghost pad). The DSL tail's capsfilter enforces
+        // video/x-raw + memory:NVMM feature — matching reference-app.
+        if (!LinkToCommon(m_pPreVidconvQueue))
+        {
+            LOG_ERROR("Failed to link pre_vidconv_queue → common for "
+                "XUriSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        // Reference-app L1394: tee.src_%u → fakesink_queue.sink.
+        if (!m_pFakeSinkQueue->LinkToSourceTee(m_pTee, "src_%u"))
+        {
+            LOG_ERROR("Failed to link tee → fakesink_queue for "
+                "XUriSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        m_isLinked = true;
+        return true;
+    }
+
+    void XUriSourceBintr::UnlinkAll()
+    {
+        LOG_FUNC();
+
+        if (!m_isLinked)
+        {
+            LOG_ERROR("XUriSourceBintr '" << GetName()
+                << "' is not in a linked state");
+            return;
+        }
+
+        // Reverse the static wiring done in LinkAll. The dynamic
+        // uridecodebin → tee.sink link (from HandleSourceElementOnPadAdded)
+        // is released by the pad's own lifecycle when the bin transitions
+        // to NULL — same pattern as the existing UriSourceBintr, which
+        // does not explicitly unlink its dynamic pad either.
+        m_pFakeSinkQueue->UnlinkFromSourceTee();
+        m_pPreVidconvQueue->UnlinkFromSourceTee();
+        m_pPreVidconvQueue->UnlinkFromSink();
+        UnlinkCommon();
+        m_pFakeSinkQueue->UnlinkFromSink();
+
+        m_isFullyLinked = false;
+        m_isLinked = false;
+    }
+
+    void XUriSourceBintr::HandleSourceElementOnPadAdded(GstElement* pBin,
+        GstPad* pPad)
+    {
+        LOG_FUNC();
+
+        // Reference-app cb_newpad L233-237: only handle "video" pads;
+        // audio/other pads on uridecodebin are ignored.
+        GstCaps* pCaps = gst_pad_query_caps(pPad, NULL);
+        GstStructure* pStructure = gst_caps_get_structure(pCaps, 0);
+        std::string name = gst_structure_get_name(pStructure);
+
+        if (name.find("video") == std::string::npos)
+        {
+            LOG_INFO("Ignoring non-video pad '" << name
+                << "' for XUriSourceBintr '" << GetName() << "'");
+            gst_caps_unref(pCaps);
+            return;
+        }
+
+        // Reference-app cb_newpad L239-240: link the dynamic pad to
+        // the internal tee's static sink pad.
+        GstPad* pTeeSinkPad = gst_element_get_static_pad(
+            m_pTee->GetGstElement(), "sink");
+        if (!pTeeSinkPad)
+        {
+            LOG_ERROR("Failed to get tee sink pad for XUriSourceBintr '"
+                << GetName() << "'");
+            gst_caps_unref(pCaps);
+            return;
+        }
+        if (gst_pad_link(pPad, pTeeSinkPad) != GST_PAD_LINK_OK)
+        {
+            LOG_ERROR("Failed to link uridecodebin → tee for "
+                "XUriSourceBintr '" << GetName() << "'");
+            gst_object_unref(pTeeSinkPad);
+            gst_caps_unref(pCaps);
+            return;
+        }
+        gst_object_unref(pTeeSinkPad);
+
+        // Reference-app cb_newpad L248-251: capture source video caps.
+        gst_structure_get_uint(pStructure, "width", &m_width);
+        gst_structure_get_uint(pStructure, "height", &m_height);
+        gst_structure_get_fraction(pStructure, "framerate",
+            (gint*)&m_fpsN, (gint*)&m_fpsD);
+
+        m_isFullyLinked = true;
+        gst_caps_unref(pCaps);
+        LOG_INFO("Video decode linked for XUriSourceBintr '" << GetName()
+            << "' (" << m_width << "x" << m_height << " @ " << m_fpsN
+            << "/" << m_fpsD << ")");
+    }
+
+    void XUriSourceBintr::HandleOnChildAdded(GstChildProxy* pChildProxy,
+        GObject* pObject, gchar* name)
+    {
+        LOG_FUNC();
+        // Reference-app parity stub for decodebin_child_added
+        // (deepstream_source_bin.c L394). No property-tuning needed
+        // for the layer-1 fidelity port; left as an extension point.
+    }
+
+    void XUriSourceBintr::HandleOnSourceSetup(GstElement* pObject,
+        GstElement* arg0)
+    {
+        LOG_FUNC();
+        // Reference-app parity stub for cb_sourcesetup. No setup
+        // needed for the layer-1 fidelity port; extension point.
+    }
+
+    static void XUriSourceElementOnPadAddedCB(GstElement* pBin,
+        GstPad* pPad, gpointer pSource)
+    {
+        static_cast<XUriSourceBintr*>(pSource)->
+            HandleSourceElementOnPadAdded(pBin, pPad);
+    }
+
+    static void XUriOnChildAddedCB(GstChildProxy* pChildProxy,
+        GObject* pObject, gchar* name, gpointer pSource)
+    {
+        static_cast<XUriSourceBintr*>(pSource)->
+            HandleOnChildAdded(pChildProxy, pObject, name);
+    }
+
+    static void XUriOnSourceSetupCB(GstElement* pObject, GstElement* arg0,
+        gpointer pSource)
+    {
+        static_cast<XUriSourceBintr*>(pSource)->
+            HandleOnSourceSetup(pObject, arg0);
+    }
+
+    //*********************************************************************************
+    //*********************************************************************************
+    // XRtspSourceBintr — see class-level comment in DslSourceBintr.h and
+    // provenance capture at
+    // splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md
+    // for the reference-app source lines (create_rtsp_src_bin L881-1089,
+    // cb_rtspsrc_select_stream L519-575, cb_newpad3 L499-515, cb_newpad2
+    // L468-495).
+    //*********************************************************************************
+
+    XRtspSourceBintr::XRtspSourceBintr(const char* name, const char* uri,
+        uint protocol, uint skipFrames, uint dropFrameInterval, uint latency)
+        : ResourceSourceBintr(name, uri)
+        , m_latency(latency)
+        , m_rtpProtocols(protocol)
+        , m_skipFrames(skipFrames)
+        , m_dropFrameInterval(dropFrameInterval)
+        , m_numExtraSurfaces(DSL_DEFAULT_NUM_EXTRA_SURFACES)
+        , m_isFullyLinked(false)
+        , m_pTeePostToCommonSrcPad(NULL)
+    {
+        LOG_FUNC();
+
+        // RTSP sources are always live.
+        m_isLive = true;
+
+        // Reference-app L897: rtspsrc as the source element.
+        m_pSourceElement = DSL_ELEMENT_NEW("rtspsrc", name);
+
+        // Reference-app L911-913: location + latency + drop-on-latency.
+        m_pSourceElement->SetAttribute("location", uri);
+        m_pSourceElement->SetAttribute("latency", m_latency);
+        m_pSourceElement->SetAttribute("drop-on-latency", TRUE);
+
+        // Reference-app L914: configure NTP sync on rtspsrc unconditionally.
+        configure_source_for_ntp_sync(m_pSourceElement->GetGstElement());
+
+        // Reference-app L920-921: RTP protocol selector.
+        m_pSourceElement->SetAttribute("protocols", m_rtpProtocols);
+
+        // Reference-app L903-904: select-stream — creates codec-specific
+        // depay + parser and wires them into tee_pre at runtime.
+        g_signal_connect(m_pSourceElement->GetGObject(), "select-stream",
+            G_CALLBACK(XRtspSourceSelectStreamCB), this);
+
+        // Reference-app L926-927: pad-added on rtspsrc — links rtspsrc's
+        // dynamic src pad to depay's static sink pad.
+        g_signal_connect(m_pSourceElement->GetGObject(), "pad-added",
+            G_CALLBACK(XRtspSourceElementOnPadAddedCB), this);
+
+        // Reference-app L930: pre-decode tee.
+        m_pTeePre = DSL_ELEMENT_EXT_NEW("tee", name, "pre-decode");
+
+        // Reference-app L938: post-decode tee.
+        m_pTeePost = DSL_ELEMENT_EXT_NEW("tee", name, "post-decode");
+
+        // Reference-app L965: queue between tee_pre and decodebin.
+        m_pDecQue = DSL_ELEMENT_EXT_NEW("queue", name, "dec-que");
+
+        // Reference-app L982 + L988-991: decodebin with pad-added and
+        // child-added signals for dynamic decoder introduction.
+        m_pDecodebin = DSL_ELEMENT_EXT_NEW("decodebin", name, "decodebin");
+        g_signal_connect(m_pDecodebin->GetGObject(), "pad-added",
+            G_CALLBACK(XRtspDecodeElementOnPadAddedCB), this);
+        g_signal_connect(m_pDecodebin->GetGObject(), "child-added",
+            G_CALLBACK(XRtspOnChildAddedCB), this);
+
+        // Reference-app L995: cap_filter — factory-typed as a queue
+        // (a reference-app misnomer we don't inherit).
+        m_pCapFilterQueue = DSL_ELEMENT_EXT_NEW("queue", name, "cap-filter");
+
+        LOG_INFO("");
+        LOG_INFO("Initial property values for XRtspSourceBintr '" << name << "'");
+        LOG_INFO("  uri                  : " << m_uri);
+        LOG_INFO("  is-live              : " << m_isLive);
+        LOG_INFO("  latency              : " << m_latency);
+        LOG_INFO("  protocols            : " << m_rtpProtocols);
+        LOG_INFO("  skip-frames          : " << m_skipFrames);
+        LOG_INFO("  drop-frame-interval  : " << m_dropFrameInterval);
+
+        // Reference-app L1040-1045 (non-dewarper): add the statically-known
+        // elements as bin children. depay + parser are added at runtime by
+        // HandleSelectStream (reference-app L560).
+        AddChild(m_pSourceElement);
+        AddChild(m_pTeePre);
+        AddChild(m_pDecQue);
+        AddChild(m_pDecodebin);
+        AddChild(m_pCapFilterQueue);
+        AddChild(m_pTeePost);
+    }
+
+    XRtspSourceBintr::~XRtspSourceBintr()
+    {
+        LOG_FUNC();
+
+        if (m_isLinked)
+        {
+            UnlinkAll();
+        }
+    }
+
+    bool XRtspSourceBintr::SetUri(const char* uri)
+    {
+        LOG_FUNC();
+
+        if (IsLinked())
+        {
+            LOG_ERROR("Unable to set uri for XRtspSourceBintr '"
+                << GetName() << "' as it's currently linked");
+            return false;
+        }
+        m_uri.assign(uri);
+        m_pSourceElement->SetAttribute("location", uri);
+        return true;
+    }
+
+    bool XRtspSourceBintr::LinkAll()
+    {
+        LOG_FUNC();
+
+        if (m_isLinked)
+        {
+            LOG_ERROR("XRtspSourceBintr '" << GetName()
+                << "' is already in a linked state");
+            return false;
+        }
+
+        // Reference-app L1048: tee_pre.src_%u → dec_que.sink.
+        if (!m_pDecQue->LinkToSourceTee(m_pTeePre, "src_%u"))
+        {
+            LOG_ERROR("Failed to link tee_pre → dec_que for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        // Reference-app L1049: dec_que → decodebin.
+        if (!m_pDecQue->LinkToSink(m_pDecodebin))
+        {
+            LOG_ERROR("Failed to link dec_que → decodebin for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        // Reference-app L1055: cap_filter_q → tee_post.
+        if (!m_pCapFilterQueue->LinkToSink(m_pTeePost))
+        {
+            LOG_ERROR("Failed to link cap_filter_q → tee_post for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        // Reference-app L1061-1063 (superset): tee_post.src_%u → common
+        // tail. Request the src pad directly so we can pass it to
+        // LinkToCommon(GstPad*); retain it so UnlinkAll can release it.
+        m_pTeePostToCommonSrcPad = gst_element_get_request_pad(
+            m_pTeePost->GetGstElement(), "src_%u");
+        if (!m_pTeePostToCommonSrcPad)
+        {
+            LOG_ERROR("Failed to request src_%u from tee_post for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            return false;
+        }
+        if (!LinkToCommon(m_pTeePostToCommonSrcPad))
+        {
+            LOG_ERROR("Failed to link tee_post → common for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            gst_element_release_request_pad(m_pTeePost->GetGstElement(),
+                m_pTeePostToCommonSrcPad);
+            gst_object_unref(m_pTeePostToCommonSrcPad);
+            m_pTeePostToCommonSrcPad = NULL;
+            return false;
+        }
+
+        m_isLinked = true;
+        return true;
+    }
+
+    void XRtspSourceBintr::UnlinkAll()
+    {
+        LOG_FUNC();
+
+        if (!m_isLinked)
+        {
+            LOG_ERROR("XRtspSourceBintr '" << GetName()
+                << "' is not in a linked state");
+            return;
+        }
+
+        // Reverse the static wiring done in LinkAll. Dynamic links
+        // (rtspsrc → depay, depay → parser → tee_pre, decodebin → cap_filter_q)
+        // are released by the pad's own lifecycle on bin transition to NULL,
+        // matching the existing RtspSourceBintr behaviour.
+        if (m_pTeePostToCommonSrcPad)
+        {
+            UnlinkCommon();
+            gst_element_release_request_pad(m_pTeePost->GetGstElement(),
+                m_pTeePostToCommonSrcPad);
+            gst_object_unref(m_pTeePostToCommonSrcPad);
+            m_pTeePostToCommonSrcPad = NULL;
+        }
+        m_pCapFilterQueue->UnlinkFromSink();
+        m_pDecQue->UnlinkFromSink();
+        m_pDecQue->UnlinkFromSourceTee();
+
+        m_isFullyLinked = false;
+        m_isLinked = false;
+    }
+
+    bool XRtspSourceBintr::HandleSelectStream(GstElement* pBin, uint num,
+        GstCaps* pCaps)
+    {
+        LOG_FUNC();
+
+        // Reference-app L523-525: pull media + encoding-name from caps.
+        GstStructure* pStructure = gst_caps_get_structure(pCaps, 0);
+        const gchar* media = gst_structure_get_string(pStructure, "media");
+        const gchar* encodingName = gst_structure_get_string(pStructure,
+            "encoding-name");
+
+        // Reference-app L530-533: video streams only.
+        if (!media or g_strcmp0(media, "video") != 0)
+        {
+            return false;
+        }
+
+        // Reference-app L536-538: create depay + parser exactly once.
+        if (m_pDepay)
+        {
+            return true;
+        }
+
+        // Reference-app L540-553: codec dispatch to depay + parser factory.
+        if (encodingName and g_strcmp0(encodingName, "H264") == 0)
+        {
+            m_pDepay = DSL_ELEMENT_EXT_NEW("rtph264depay", GetCStrName(),
+                "depay");
+            m_pParser = DSL_ELEMENT_EXT_NEW("h264parse", GetCStrName(),
+                "parser");
+        }
+        else if (encodingName and g_strcmp0(encodingName, "H265") == 0)
+        {
+            m_pDepay = DSL_ELEMENT_EXT_NEW("rtph265depay", GetCStrName(),
+                "depay");
+            m_pParser = DSL_ELEMENT_EXT_NEW("h265parse", GetCStrName(),
+                "parser");
+        }
+        else
+        {
+            LOG_WARN("Encoding '" << (encodingName ? encodingName : "?")
+                << "' not supported by XRtspSourceBintr '" << GetName()
+                << "'");
+            return false;
+        }
+
+        // Reference-app L560: add depay + parser to the bin.
+        AddChild(m_pDepay);
+        AddChild(m_pParser);
+
+        // Reference-app L562-563: depay → parser → tee_pre.
+        if (!m_pDepay->LinkToSink(m_pParser) or
+            !m_pParser->LinkToSink(m_pTeePre))
+        {
+            LOG_ERROR("Failed to link depay → parser → tee_pre for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        // Reference-app L565-569: sync depay + parser state with parent bin.
+        if (!gst_element_sync_state_with_parent(m_pDepay->GetGstElement()))
+        {
+            LOG_ERROR("depay failed to sync state with parent for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            return false;
+        }
+        if (!gst_element_sync_state_with_parent(m_pParser->GetGstElement()))
+        {
+            LOG_ERROR("parser failed to sync state with parent for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            return false;
+        }
+
+        m_isFullyLinked = true;
+        LOG_INFO("Selected " << encodingName << " stream for "
+            "XRtspSourceBintr '" << GetName() << "'");
+        return true;
+    }
+
+    void XRtspSourceBintr::HandleSourceElementOnPadAdded(GstElement* pBin,
+        GstPad* pPad)
+    {
+        LOG_FUNC();
+
+        // Reference-app cb_newpad3 L501-505: only handle x-rtp caps.
+        GstCaps* pCaps = gst_pad_query_caps(pPad, NULL);
+        GstStructure* pStructure = gst_caps_get_structure(pCaps, 0);
+        std::string name = gst_structure_get_name(pStructure);
+
+        if (name.find("x-rtp") == std::string::npos)
+        {
+            gst_caps_unref(pCaps);
+            return;
+        }
+
+        if (!m_pDepay)
+        {
+            LOG_ERROR("rtspsrc pad-added fired before depay was created for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            gst_caps_unref(pCaps);
+            return;
+        }
+
+        // Reference-app cb_newpad3 L507-511: link rtspsrc.src → depay.sink.
+        GstPad* pDepaySinkPad = gst_element_get_static_pad(
+            m_pDepay->GetGstElement(), "sink");
+        if (!pDepaySinkPad)
+        {
+            LOG_ERROR("Failed to get depay sink pad for XRtspSourceBintr '"
+                << GetName() << "'");
+            gst_caps_unref(pCaps);
+            return;
+        }
+        if (gst_pad_link(pPad, pDepaySinkPad) != GST_PAD_LINK_OK)
+        {
+            LOG_ERROR("Failed to link rtspsrc → depay for XRtspSourceBintr '"
+                << GetName() << "'");
+        }
+        gst_object_unref(pDepaySinkPad);
+        gst_caps_unref(pCaps);
+    }
+
+    void XRtspSourceBintr::HandleDecodeElementOnPadAdded(GstElement* pBin,
+        GstPad* pPad)
+    {
+        LOG_FUNC();
+
+        // Reference-app cb_newpad2 L470-472: only handle "video" pads.
+        GstCaps* pCaps = gst_pad_query_caps(pPad, NULL);
+        GstStructure* pStructure = gst_caps_get_structure(pCaps, 0);
+        std::string name = gst_structure_get_name(pStructure);
+
+        if (name.find("video") == std::string::npos)
+        {
+            gst_caps_unref(pCaps);
+            return;
+        }
+
+        // Reference-app cb_newpad2 L476-479: link decodebin.src → cap_filter_q.sink.
+        GstPad* pCapFilterSinkPad = gst_element_get_static_pad(
+            m_pCapFilterQueue->GetGstElement(), "sink");
+        if (!pCapFilterSinkPad)
+        {
+            LOG_ERROR("Failed to get cap_filter_q sink pad for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            gst_caps_unref(pCaps);
+            return;
+        }
+        if (gst_pad_link(pPad, pCapFilterSinkPad) != GST_PAD_LINK_OK)
+        {
+            LOG_ERROR("Failed to link decodebin → cap_filter_q for "
+                "XRtspSourceBintr '" << GetName() << "'");
+            gst_object_unref(pCapFilterSinkPad);
+            gst_caps_unref(pCaps);
+            return;
+        }
+        gst_object_unref(pCapFilterSinkPad);
+
+        // Reference-app cb_newpad2 L485-488: capture source video caps.
+        gst_structure_get_uint(pStructure, "width", &m_width);
+        gst_structure_get_uint(pStructure, "height", &m_height);
+        gst_structure_get_fraction(pStructure, "framerate",
+            (gint*)&m_fpsN, (gint*)&m_fpsD);
+
+        gst_caps_unref(pCaps);
+        LOG_INFO("Video decode linked for XRtspSourceBintr '" << GetName()
+            << "' (" << m_width << "x" << m_height << " @ " << m_fpsN
+            << "/" << m_fpsD << ")");
+    }
+
+    void XRtspSourceBintr::HandleOnChildAdded(GstChildProxy* pChildProxy,
+        GObject* pObject, gchar* name)
+    {
+        LOG_FUNC();
+
+        std::string strName = name;
+
+        // Cascade child-added into nested decodebins introduced by
+        // the outer decodebin.
+        if (strName.find("decodebin") != std::string::npos)
+        {
+            g_signal_connect(G_OBJECT(pObject), "child-added",
+                G_CALLBACK(XRtspOnChildAddedCB), this);
+        }
+        // Tune nvv4l2decoder properties when decodebin introduces it,
+        // matching the tuning that the existing UriSourceBintr applies
+        // (skip-frames, drop-frame-interval, num-extra-surfaces, plus
+        // enable-max-performance on Jetson).
+        else if (strName.find("nvv4l2decoder") != std::string::npos)
+        {
+            LOG_INFO("Tuning nvv4l2decoder properties for XRtspSourceBintr '"
+                << GetName() << "'");
+            if (m_skipFrames)
+            {
+                g_object_set(pObject, "skip-frames", m_skipFrames, NULL);
+            }
+            if (m_cudaDeviceProp.integrated)
+            {
+                if (NVDS_VERSION_MINOR < 3)
+                {
+                    g_object_set(pObject, "bufapi-version", TRUE, NULL);
+                }
+                g_object_set(pObject, "enable-max-performance", TRUE, NULL);
+            }
+            g_object_set(pObject, "drop-frame-interval",
+                m_dropFrameInterval, NULL);
+            g_object_set(pObject, "num-extra-surfaces",
+                m_numExtraSurfaces, NULL);
+        }
+    }
+
+    static boolean XRtspSourceSelectStreamCB(GstElement* pBin, uint num,
+        GstCaps* pCaps, gpointer pSource)
+    {
+        return static_cast<XRtspSourceBintr*>(pSource)->
+            HandleSelectStream(pBin, num, pCaps);
+    }
+
+    static void XRtspSourceElementOnPadAddedCB(GstElement* pBin, GstPad* pPad,
+        gpointer pSource)
+    {
+        static_cast<XRtspSourceBintr*>(pSource)->
+            HandleSourceElementOnPadAdded(pBin, pPad);
+    }
+
+    static void XRtspDecodeElementOnPadAddedCB(GstElement* pBin, GstPad* pPad,
+        gpointer pSource)
+    {
+        static_cast<XRtspSourceBintr*>(pSource)->
+            HandleDecodeElementOnPadAdded(pBin, pPad);
+    }
+
+    static void XRtspOnChildAddedCB(GstChildProxy* pChildProxy,
+        GObject* pObject, gchar* name, gpointer pSource)
+    {
+        static_cast<XRtspSourceBintr*>(pSource)->
+            HandleOnChildAdded(pChildProxy, pObject, name);
+    }
+
 } // SDL namespace

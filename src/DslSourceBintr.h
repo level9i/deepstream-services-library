@@ -2184,6 +2184,419 @@ namespace DSL
      */
     static int RtspListenerNotificationHandler(gpointer pSource);
 
+    //*********************************************************************************
+    //*********************************************************************************
+    // XUriSourceBintr — verbatim port of the NVIDIA deepstream-app reference
+    // implementation `create_uridecode_src_bin`
+    // (opt/nvidia/deepstream/deepstream/sources/apps/apps-common/src/deepstream_source_bin.c
+    // lines 1285-1410 for the constructor, 231-270 for the pad-added handler).
+    // Provenance + verbatim capture at
+    // splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md.
+    //
+    // Topology (single-video, non-dewarper — dewarper omitted in this port):
+    //   uridecodebin
+    //       ↓ pad-added → HandleSourceElementOnPadAdded → tee.sink
+    //   tee
+    //       ↓ src_%u → pre_vidconv_queue (matches ref-app "cap_filter" queue)
+    //   pre_vidconv_queue → LinkToCommon
+    //       (DSL common tail: nvvideoconvert → [nvvideorate] → capsfilter
+    //        → queue → bin src ghost-pad, video/x-raw + memory:NVMM feature,
+    //        superset of ref-app nvvidconv + cap_filter1 + ghost-pad)
+    //       ↓ src_%u → fakesink_queue → fakesink   (drain branch, ref-app L1394)
+    //*********************************************************************************
+
+    /**
+     * @class XUriSourceBintr
+     * @brief URI source bin whose internal element sequence matches the
+     * NVIDIA deepstream-app reference implementation of
+     * create_uridecode_src_bin. Uses uridecodebin with an internal tee
+     * feeding both a processing branch (through a shock-absorber queue
+     * into the DSL common tail) and a drain branch (fakesink_queue →
+     * fakesink) exactly as the reference app does.
+     */
+    class XUriSourceBintr : public ResourceSourceBintr
+    {
+    public:
+
+        XUriSourceBintr(const char* name, const char* uri);
+
+        ~XUriSourceBintr();
+
+        /**
+         * @brief Links all child elements owned by this source bintr.
+         * The static links (tee → drain and tee → processing → common)
+         * are done here; the dynamic uridecodebin → tee link fires
+         * from HandleSourceElementOnPadAdded once the video pad appears.
+         * @return true on success, false otherwise
+         */
+        bool LinkAll();
+
+        /**
+         * @brief Unlinks all child elements owned by this source bintr.
+         */
+        void UnlinkAll();
+
+        /**
+         * @brief Updates the uridecodebin's uri property. Only valid
+         * while the source is unlinked.
+         * @param uri new URI to set
+         * @return true on success, false otherwise
+         */
+        bool SetUri(const char* uri);
+
+        /**
+         * @brief pad-added dispatch: link uridecodebin's dynamic src
+         * pad to the internal tee sink pad. Matches reference-app
+         * cb_newpad (deepstream_source_bin.c L231-270).
+         * @param pBin the uridecodebin emitting the pad
+         * @param pPad the newly added pad
+         */
+        void HandleSourceElementOnPadAdded(GstElement* pBin, GstPad* pPad);
+
+        /**
+         * @brief child-added dispatch — reference-app parity hook.
+         * Currently a no-op; retained for extension.
+         * @param pChildProxy the child-proxy emitting the signal
+         * @param pObject the newly added child
+         * @param name the child's name
+         */
+        void HandleOnChildAdded(GstChildProxy* pChildProxy,
+            GObject* pObject, gchar* name);
+
+        /**
+         * @brief source-setup dispatch — reference-app parity hook.
+         * Currently a no-op; retained for extension.
+         * @param pObject the uridecodebin emitting the signal
+         * @param arg0 the concrete source element that was set up
+         */
+        void HandleOnSourceSetup(GstElement* pObject, GstElement* arg0);
+
+    private:
+
+        /**
+         * @brief The static links (tee → queues → common) and the
+         * dynamic link (uridecodebin → tee) all have to complete
+         * before the bin can be safely unlinked. Set true once the
+         * processing branch is fully wired in HandleSourceElementOnPadAdded.
+         */
+        bool m_isFullyLinked;
+
+        /**
+         * @brief Internal tee — reference-app deepstream_source_bin.c
+         * L1374. Feeds two branches: the processing branch (through
+         * m_pPreVidconvQueue into the DSL common tail) and the drain
+         * branch (through m_pFakeSinkQueue into m_pFakeSink).
+         */
+        DSL_ELEMENT_PTR m_pTee;
+
+        /**
+         * @brief Shock-absorber queue between the tee's processing
+         * src pad and the DSL common tail (nvvideoconvert). This is
+         * ref-app L1321 — named "cap_filter" in the reference app but
+         * factory-typed as a queue (a misnomer we don't inherit).
+         */
+        DSL_ELEMENT_PTR m_pPreVidconvQueue;
+
+        /**
+         * @brief Queue in front of m_pFakeSink — reference-app L1368.
+         */
+        DSL_ELEMENT_PTR m_pFakeSinkQueue;
+
+        /**
+         * @brief Drain sink for the tee's unused branch — reference-app
+         * L1362, with sync=FALSE / async=FALSE / enable-last-sample=FALSE
+         * (ref-app L1396-1397).
+         */
+        DSL_ELEMENT_PTR m_pFakeSink;
+    };
+
+    /**
+     * @brief pad-added callback for uridecodebin inside an XUriSourceBintr.
+     * Dispatches to member HandleSourceElementOnPadAdded.
+     * @param[in] pBin the uridecodebin emitting the signal
+     * @param[in] pPad the newly added pad
+     * @param[in] pSource opaque pointer to the XUriSourceBintr instance
+     */
+    static void XUriSourceElementOnPadAddedCB(GstElement* pBin,
+        GstPad* pPad, gpointer pSource);
+
+    /**
+     * @brief child-added callback for uridecodebin inside an XUriSourceBintr.
+     * Dispatches to member HandleOnChildAdded.
+     * @param[in] pChildProxy the child-proxy emitting the signal
+     * @param[in] pObject the newly added child
+     * @param[in] name the child's name
+     * @param[in] pSource opaque pointer to the XUriSourceBintr instance
+     */
+    static void XUriOnChildAddedCB(GstChildProxy* pChildProxy,
+        GObject* pObject, gchar* name, gpointer pSource);
+
+    /**
+     * @brief source-setup callback for uridecodebin inside an XUriSourceBintr.
+     * Dispatches to member HandleOnSourceSetup.
+     * @param[in] pObject the uridecodebin emitting the signal
+     * @param[in] arg0 the concrete source element that was set up
+     * @param[in] pSource opaque pointer to the XUriSourceBintr instance
+     */
+    static void XUriOnSourceSetupCB(GstElement* pObject, GstElement* arg0,
+        gpointer pSource);
+
+    //*********************************************************************************
+    //*********************************************************************************
+    // XRtspSourceBintr — verbatim port of the NVIDIA deepstream-app reference
+    // implementation `create_rtsp_src_bin`
+    // (opt/nvidia/deepstream/deepstream/sources/apps/apps-common/src/deepstream_source_bin.c
+    // lines 881-1089 for the constructor, 499-515 for rtspsrc pad-added,
+    // 468-495 for decodebin pad-added, 519-575 for rtspsrc select-stream).
+    // Provenance + verbatim capture at
+    // splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md.
+    //
+    // Topology (single-video, non-dewarper, non-smart-record — both omitted
+    // in this port; both tees are kept as extension points with their second
+    // branch left unrequested):
+    //   rtspsrc
+    //       ↓ pad-added → HandleSourceElementOnPadAdded → depay.sink
+    //   rtph264depay / rtph265depay          (created dynamically in select-stream)
+    //       ↓ static link created in select-stream callback
+    //   h264parse / h265parse                (created dynamically in select-stream)
+    //       ↓ static link created in select-stream callback into tee_pre
+    //   tee_pre                              (2nd src pad unrequested — smart-record hook)
+    //       ↓ src_%u → dec_que.sink
+    //   dec_que (queue)
+    //       ↓
+    //   decodebin
+    //       ↓ pad-added → HandleDecodeElementOnPadAdded → cap_filter_q.sink
+    //   cap_filter_q (queue — ref-app calls it "cap_filter", misnomer)
+    //       ↓
+    //   tee_post                             (2nd src pad unrequested — dewarper hook)
+    //       ↓ src_%u → LinkToCommon
+    //         (DSL common tail: nvvideoconvert → [nvvideorate] → capsfilter
+    //          → queue → bin src ghost-pad, video/x-raw + memory:NVMM feature,
+    //          superset of ref-app nvvidconv + cap_filter1 + ghost-pad)
+    //*********************************************************************************
+
+    /**
+     * @class XRtspSourceBintr
+     * @brief RTSP source bin whose internal element sequence matches the
+     * NVIDIA deepstream-app reference implementation of
+     * create_rtsp_src_bin. Uses rtspsrc + dynamic codec-dispatched depay
+     * and parser (H264/H265) + two internal tees flanking a decodebin,
+     * with the DSL common tail as the src-pad ghost. Smart-record and
+     * dewarper branches are omitted in this port; both tees are kept
+     * so those extensions can be added later without a further DSL edit.
+     */
+    class XRtspSourceBintr : public ResourceSourceBintr
+    {
+    public:
+
+        XRtspSourceBintr(const char* name, const char* uri, uint protocol,
+            uint skipFrames, uint dropFrameInterval, uint latency);
+
+        ~XRtspSourceBintr();
+
+        /**
+         * @brief Links all child elements owned by this source bintr.
+         * The static links (tee_pre → dec_que → decodebin,
+         * cap_filter_q → tee_post, and tee_post → common) are done here.
+         * The dynamic links (rtspsrc → depay, decodebin → cap_filter_q,
+         * and depay → parser → tee_pre) are wired in select-stream and
+         * pad-added callbacks.
+         * @return true on success, false otherwise
+         */
+        bool LinkAll();
+
+        /**
+         * @brief Unlinks all child elements owned by this source bintr.
+         */
+        void UnlinkAll();
+
+        /**
+         * @brief Updates the rtspsrc's location property. Only valid
+         * while the source is unlinked.
+         * @param uri new URI to set
+         * @return true on success, false otherwise
+         */
+        bool SetUri(const char* uri);
+
+        /**
+         * @brief select-stream dispatch: create the codec-appropriate
+         * rtp depay + parser and link them into tee_pre. Matches
+         * reference-app cb_rtspsrc_select_stream (L519-575).
+         * @param pBin the rtspsrc emitting the signal
+         * @param num stream index (unused)
+         * @param pCaps caps for the offered stream
+         * @return true if the stream should be selected, false to skip
+         */
+        bool HandleSelectStream(GstElement* pBin, uint num, GstCaps* pCaps);
+
+        /**
+         * @brief pad-added dispatch on rtspsrc: link the dynamic src
+         * pad to depay's static sink pad. Matches reference-app
+         * cb_newpad3 (L499-515).
+         * @param pBin the rtspsrc emitting the pad
+         * @param pPad the newly added pad
+         */
+        void HandleSourceElementOnPadAdded(GstElement* pBin, GstPad* pPad);
+
+        /**
+         * @brief pad-added dispatch on decodebin: link the dynamic
+         * video src pad to cap_filter_q's static sink pad. Matches
+         * reference-app cb_newpad2 (L468-495).
+         * @param pBin the decodebin emitting the pad
+         * @param pPad the newly added pad
+         */
+        void HandleDecodeElementOnPadAdded(GstElement* pBin, GstPad* pPad);
+
+        /**
+         * @brief child-added dispatch on decodebin — used to tune
+         * decoder properties (skip-frames, drop-frame-interval,
+         * enable-max-performance on Jetson) when nvv4l2decoder is
+         * introduced by decodebin.
+         * @param pChildProxy the child-proxy emitting the signal
+         * @param pObject the newly added child
+         * @param name the child's name
+         */
+        void HandleOnChildAdded(GstChildProxy* pChildProxy,
+            GObject* pObject, gchar* name);
+
+    private:
+
+        /**
+         * @brief Number of ms of jitter buffer in rtspsrc.
+         */
+        uint m_latency;
+
+        /**
+         * @brief Bitmask of allowed RTP transports for rtspsrc's
+         * "protocols" property (0x4 = TCP, 0x7 = UDP + UDP-MCAST + TCP).
+         */
+        uint m_rtpProtocols;
+
+        /**
+         * @brief Type of frames to skip during decoding; forwarded
+         * to nvv4l2decoder via HandleOnChildAdded when the decoder
+         * is introduced by decodebin.
+         */
+        uint m_skipFrames;
+
+        /**
+         * @brief Interval to drop frames at the decoder; forwarded
+         * to nvv4l2decoder via HandleOnChildAdded.
+         */
+        uint m_dropFrameInterval;
+
+        /**
+         * @brief Additional decode surfaces beyond the driver minimum;
+         * forwarded to nvv4l2decoder via HandleOnChildAdded.
+         */
+        uint m_numExtraSurfaces;
+
+        /**
+         * @brief Track when the static tee/queue/decodebin chain has
+         * been established (LinkAll ran successfully) versus fully
+         * connected (depay/parser plumbed by select-stream and
+         * cap_filter_q linked by decodebin's pad-added).
+         */
+        bool m_isFullyLinked;
+
+        /**
+         * @brief H.264 or H.265 RTP depay element, created lazily in
+         * HandleSelectStream based on RTP encoding-name. Matches
+         * reference-app bin->depay (L541 / L546).
+         */
+        DSL_ELEMENT_PTR m_pDepay;
+
+        /**
+         * @brief H.264 or H.265 RTP parser, created lazily in
+         * HandleSelectStream. Matches reference-app bin->parser
+         * (L544 / L549).
+         */
+        DSL_ELEMENT_PTR m_pParser;
+
+        /**
+         * @brief Pre-decode tee — reference-app tee_rtsp_pre_decode
+         * (L930). One src pad is used (feeding dec_que); the second
+         * is left unrequested as an extension point for smart-record.
+         */
+        DSL_ELEMENT_PTR m_pTeePre;
+
+        /**
+         * @brief Queue between tee_pre and decodebin — reference-app
+         * bin->dec_que (L965).
+         */
+        DSL_ELEMENT_PTR m_pDecQue;
+
+        /**
+         * @brief decodebin (dynamic decoder discovery) — reference-app
+         * bin->decodebin (L982). Emits pad-added for the video src
+         * pad and child-added for the introduced decoder.
+         */
+        DSL_ELEMENT_PTR m_pDecodebin;
+
+        /**
+         * @brief Queue between decodebin and tee_post — reference-app
+         * bin->cap_filter (L995), which is factory-typed as a queue
+         * (a misnomer in the reference source that we don't inherit).
+         */
+        DSL_ELEMENT_PTR m_pCapFilterQueue;
+
+        /**
+         * @brief Post-decode tee — reference-app tee_rtsp_post_decode
+         * (L938). One src pad is used (feeding LinkToCommon); the
+         * second is left unrequested as an extension point for dewarper.
+         */
+        DSL_ELEMENT_PTR m_pTeePost;
+
+        /**
+         * @brief Retained src pad from tee_post used to link into
+         * the DSL common tail (nvvideoconvert). Held so UnlinkAll
+         * can release it back to the tee.
+         */
+        GstPad* m_pTeePostToCommonSrcPad;
+    };
+
+    /**
+     * @brief select-stream callback for rtspsrc inside an XRtspSourceBintr.
+     * Dispatches to member HandleSelectStream.
+     * @param[in] pBin the rtspsrc emitting the signal
+     * @param[in] num stream index
+     * @param[in] pCaps caps for the offered stream
+     * @param[in] pSource opaque pointer to the XRtspSourceBintr instance
+     * @return TRUE to select the stream, FALSE to skip
+     */
+    static boolean XRtspSourceSelectStreamCB(GstElement* pBin, uint num,
+        GstCaps* pCaps, gpointer pSource);
+
+    /**
+     * @brief pad-added callback for rtspsrc inside an XRtspSourceBintr.
+     * Dispatches to member HandleSourceElementOnPadAdded.
+     * @param[in] pBin the rtspsrc emitting the pad
+     * @param[in] pPad the newly added pad
+     * @param[in] pSource opaque pointer to the XRtspSourceBintr instance
+     */
+    static void XRtspSourceElementOnPadAddedCB(GstElement* pBin, GstPad* pPad,
+        gpointer pSource);
+
+    /**
+     * @brief pad-added callback for decodebin inside an XRtspSourceBintr.
+     * Dispatches to member HandleDecodeElementOnPadAdded.
+     * @param[in] pBin the decodebin emitting the pad
+     * @param[in] pPad the newly added pad
+     * @param[in] pSource opaque pointer to the XRtspSourceBintr instance
+     */
+    static void XRtspDecodeElementOnPadAddedCB(GstElement* pBin, GstPad* pPad,
+        gpointer pSource);
+
+    /**
+     * @brief child-added callback for decodebin inside an XRtspSourceBintr.
+     * Dispatches to member HandleOnChildAdded.
+     * @param[in] pChildProxy the child-proxy emitting the signal
+     * @param[in] pObject the newly added child
+     * @param[in] name the child's name
+     * @param[in] pSource opaque pointer to the XRtspSourceBintr instance
+     */
+    static void XRtspOnChildAddedCB(GstChildProxy* pChildProxy,
+        GObject* pObject, gchar* name, gpointer pSource);
 
 } // DSL
 #endif // _DSL_SOURCE_BINTR_H
