@@ -2211,9 +2211,51 @@ namespace DSL
     //       ↓ src_%u → pre_vidconv_queue (matches ref-app "cap_filter" queue)
     //   pre_vidconv_queue → LinkToCommon
     //       (DSL common tail: nvvideoconvert → [nvvideorate] → capsfilter
-    //        → queue → bin src ghost-pad, video/x-raw + memory:NVMM feature,
-    //        superset of ref-app nvvidconv + cap_filter1 + ghost-pad)
+    //        → queue → bin src ghost-pad, video/x-raw + memory:NVMM feature.
+    //        See "Accepted delta from reference-app" below.)
     //       ↓ src_%u → fakesink_queue → fakesink   (drain branch, ref-app L1394)
+    //
+    // === ACCEPTED DELTA FROM REFERENCE-APP ===
+    //
+    // Ref-app tail (L1327-1360):
+    //     nvvidconv (nvvideoconvert)
+    //       → cap_filter1 (capsfilter, video/x-raw + memory:NVMM)
+    //         → GHOST_PAD                                             (3 tail nodes)
+    //
+    // My tail (via LinkToCommon inherited from VideoSourceBintr):
+    //     m_pBufferOutVidConv (nvvideoconvert)
+    //       → m_pBufferOutCapsFilter (capsfilter, video/x-raw + memory:NVMM)
+    //         → m_pSourceQueue (queue)                           <-- EXTRA
+    //           → GHOST_PAD                                          (4 tail nodes)
+    //
+    // The extra element is m_pSourceQueue, a passive shock-absorber queue
+    // created by VideoSourceBintr's own constructor (see
+    // DslSourceBintr.cpp:188-196) and added to the bin at L191-193. The
+    // base class puts the src ghost pad on m_pSourceQueue's src pad
+    // (L196); ref-app puts it on cap_filter1's src pad (L1360).
+    //
+    // Behavioural equivalence:
+    //   - The caps at the ghost pad are IDENTICAL to ref-app's
+    //     (video/x-raw + memory:NVMM feature). Downstream sees the same
+    //     contract; anything wired to this source-bin's src pad negotiates
+    //     the same caps.
+    //   - The extra queue does not modify, reorder, drop, or duplicate
+    //     buffers. It is a standard GStreamer decoupling point (buffer-
+    //     flow shock absorber). No functional divergence in the buffer
+    //     stream itself.
+    //
+    // Trade-off accepted:
+    //   - Reuse the DSL VideoSourceBintr base class hierarchy (all DSL
+    //     sources share the same tail plumbing), at the cost of one
+    //     extra queue vs the reference implementation.
+    //   - Strict-match alternative (rejected in this port): bypass
+    //     LinkToCommon; hand-roll own nvvideoconvert + capsfilter with
+    //     the src ghost pad on the capsfilter; leave the base class's
+    //     m_pBufferOutVidConv / m_pBufferOutCapsFilter / m_pSourceQueue
+    //     as dead weight sitting in the bin unused.
+    //
+    // See splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md
+    // "Accepted deltas from reference-app" for the full analysis.
     //*********************************************************************************
 
     /**
@@ -2410,8 +2452,38 @@ namespace DSL
     //   tee_post                             (2nd src pad unrequested — dewarper hook)
     //       ↓ src_%u → LinkToCommon
     //         (DSL common tail: nvvideoconvert → [nvvideorate] → capsfilter
-    //          → queue → bin src ghost-pad, video/x-raw + memory:NVMM feature,
-    //          superset of ref-app nvvidconv + cap_filter1 + ghost-pad)
+    //          → queue → bin src ghost-pad, video/x-raw + memory:NVMM feature.
+    //          See "Accepted delta from reference-app" below.)
+    //
+    // === ACCEPTED DELTA FROM REFERENCE-APP ===
+    //
+    // Ref-app tail (L1015-1063):
+    //     nvvidconv (nvvideoconvert)
+    //       → cap_filter1 (capsfilter, video/x-raw + memory:NVMM)
+    //         → GHOST_PAD                                             (3 tail nodes)
+    //
+    // My tail (via LinkToCommon inherited from VideoSourceBintr):
+    //     m_pBufferOutVidConv (nvvideoconvert)
+    //       → m_pBufferOutCapsFilter (capsfilter, video/x-raw + memory:NVMM)
+    //         → m_pSourceQueue (queue)                           <-- EXTRA
+    //           → GHOST_PAD                                          (4 tail nodes)
+    //
+    // Same delta as XUriSourceBintr — see that class's "ACCEPTED DELTA
+    // FROM REFERENCE-APP" comment block for the full rationale, buffer-
+    // stream equivalence argument, and rejected strict-match alternative.
+    // Repeating the summary here for readers who land in this class first:
+    //
+    //   - m_pSourceQueue is a passive shock-absorber queue owned by
+    //     VideoSourceBintr's constructor (DslSourceBintr.cpp:188-196).
+    //   - The ghost-pad caps at the bin src (video/x-raw + memory:NVMM
+    //     feature) are IDENTICAL to ref-app's; downstream cannot tell.
+    //   - The extra queue does not modify, reorder, drop, or duplicate
+    //     buffers; it is a standard GStreamer decoupling element.
+    //   - Trade-off: reuse the DSL VideoSourceBintr base at the cost of
+    //     one extra element vs strict ref-app fidelity.
+    //
+    // See splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md
+    // "Accepted deltas from reference-app" for the full analysis.
     //*********************************************************************************
 
     /**

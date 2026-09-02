@@ -4218,10 +4218,16 @@ namespace DSL
             return false;
         }
 
-        // Reference-app L1392-1393 (superset): pre_vidconv_queue →
-        // DSL common tail (nvvideoconvert + [nvvideorate] + capsfilter
-        // + queue + ghost pad). The DSL tail's capsfilter enforces
-        // video/x-raw + memory:NVMM feature — matching reference-app.
+        // Reference-app L1392-1393: pre_vidconv_queue → nvvidconv →
+        // cap_filter1 → ghost pad. Here we call LinkToCommon which
+        // uses VideoSourceBintr's own nvvideoconvert + capsfilter +
+        // m_pSourceQueue tail; the capsfilter enforces the same
+        // video/x-raw + memory:NVMM caps at the ghost pad as ref-app,
+        // but there is ONE EXTRA queue (m_pSourceQueue) between the
+        // capsfilter and the ghost pad — an accepted delta documented
+        // in the class-level "ACCEPTED DELTA FROM REFERENCE-APP" block
+        // in DslSourceBintr.h. The extra queue is a passive shock
+        // absorber; downstream caps are unchanged.
         if (!LinkToCommon(m_pPreVidconvQueue))
         {
             LOG_ERROR("Failed to link pre_vidconv_queue → common for "
@@ -4565,9 +4571,16 @@ namespace DSL
             return false;
         }
 
-        // Reference-app L1061-1063 (superset): tee_post.src_%u → common
-        // tail. Request the src pad directly so we can pass it to
-        // LinkToCommon(GstPad*); retain it so UnlinkAll can release it.
+        // Reference-app L1061-1063: tee_post.src_%u → nvvidconv →
+        // cap_filter1 → ghost pad. Here we request the tee's src pad
+        // directly, pass it to LinkToCommon(GstPad*), and retain the
+        // pad so UnlinkAll can release it back to the tee. The DSL
+        // common tail (VideoSourceBintr's nvvideoconvert + capsfilter
+        // + m_pSourceQueue) is one queue LONGER than ref-app's — see
+        // the class-level "ACCEPTED DELTA FROM REFERENCE-APP" block
+        // in DslSourceBintr.h. The extra queue is a passive shock
+        // absorber; the ghost-pad caps (video/x-raw + memory:NVMM)
+        // match ref-app exactly.
         m_pTeePostToCommonSrcPad = gst_element_get_request_pad(
             m_pTeePost->GetGstElement(), "src_%u");
         if (!m_pTeePostToCommonSrcPad)
