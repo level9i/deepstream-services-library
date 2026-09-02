@@ -4095,21 +4095,28 @@ namespace DSL
     // cb_newpad L231-270).
     //*********************************************************************************
 
-    XUriSourceBintr::XUriSourceBintr(const char* name, const char* uri)
+    XUriSourceBintr::XUriSourceBintr(const char* name, const char* uri,
+        bool isLive, uint skipFrames, uint dropFrameInterval)
         : ResourceSourceBintr(name, uri)
+        , m_skipFrames(skipFrames)
+        , m_dropFrameInterval(dropFrameInterval)
+        , m_numExtraSurfaces(DSL_DEFAULT_NUM_EXTRA_SURFACES)
         , m_isFullyLinked(false)
     {
         LOG_FUNC();
 
-        // Reference-app L1307-1309: a file:/ URI is not a live source.
-        std::string uriStr(uri);
-        m_isLive = (uriStr.rfind("file:/", 0) != 0);
+        // Live-vs-non-live is caller-controlled (matches the existing
+        // UriSourceBintr's explicit isLive argument). Reference-app L1307-1309
+        // only sets config->live_source = FALSE for file:/ URIs at the caller
+        // level; we defer that policy to the caller instead.
+        m_isLive = isLive;
 
         // Reference-app L1292: uridecodebin as the source element.
         m_pSourceElement = DSL_ELEMENT_NEW("uridecodebin", name);
 
         // Reference-app L1310-1312: configure NTP sync only when the
         // URI is rtsp:// (uridecodebin will use rtspsrc internally).
+        std::string uriStr(uri);
         if (uriStr.rfind("rtsp://", 0) == 0)
         {
             configure_source_for_ntp_sync(m_pSourceElement->GetGstElement());
@@ -4143,8 +4150,10 @@ namespace DSL
 
         LOG_INFO("");
         LOG_INFO("Initial property values for XUriSourceBintr '" << name << "'");
-        LOG_INFO("  uri     : " << m_uri);
-        LOG_INFO("  is-live : " << m_isLive);
+        LOG_INFO("  uri                 : " << m_uri);
+        LOG_INFO("  is-live             : " << m_isLive);
+        LOG_INFO("  skip-frames         : " << m_skipFrames);
+        LOG_INFO("  drop-frame-interval : " << m_dropFrameInterval);
 
         // Add all elements as children to this Bintr. The base
         // VideoSourceBintr constructor has already added its own
@@ -4315,9 +4324,44 @@ namespace DSL
         GObject* pObject, gchar* name)
     {
         LOG_FUNC();
-        // Reference-app parity stub for decodebin_child_added
-        // (deepstream_source_bin.c L394). No property-tuning needed
-        // for the layer-1 fidelity port; left as an extension point.
+
+        std::string strName = name;
+        LOG_INFO("Child object with name '" << strName << "' added");
+
+        // Cascade child-added into nested decodebins introduced by
+        // uridecodebin, matching UriSourceBintr::HandleOnChildAdded.
+        if (strName.find("decodebin") != std::string::npos)
+        {
+            g_signal_connect(G_OBJECT(pObject), "child-added",
+                G_CALLBACK(XUriOnChildAddedCB), this);
+        }
+        else if (strName.find("nvjpegdec") != std::string::npos)
+        {
+            g_object_set(pObject, "DeepStream", TRUE, NULL);
+        }
+        else if (strName.find("nvv4l2decoder") != std::string::npos)
+        {
+            LOG_INFO("Tuning nvv4l2decoder properties for XUriSourceBintr '"
+                << GetName() << "'");
+            if (m_skipFrames)
+            {
+                g_object_set(pObject, "skip-frames", m_skipFrames, NULL);
+            }
+            // aarch64 (Jetson) only
+            if (m_cudaDeviceProp.integrated)
+            {
+                // DS 6.2 ONLY — removed in DS 6.3 and 6.4
+                if (NVDS_VERSION_MINOR < 3)
+                {
+                    g_object_set(pObject, "bufapi-version", TRUE, NULL);
+                }
+                g_object_set(pObject, "enable-max-performance", TRUE, NULL);
+            }
+            g_object_set(pObject, "drop-frame-interval",
+                m_dropFrameInterval, NULL);
+            g_object_set(pObject, "num-extra-surfaces",
+                m_numExtraSurfaces, NULL);
+        }
     }
 
     void XUriSourceBintr::HandleOnSourceSetup(GstElement* pObject,
@@ -4462,6 +4506,27 @@ namespace DSL
         }
         m_uri.assign(uri);
         m_pSourceElement->SetAttribute("location", uri);
+        return true;
+    }
+
+    uint XRtspSourceBintr::GetLatency()
+    {
+        LOG_FUNC();
+        return m_latency;
+    }
+
+    bool XRtspSourceBintr::SetLatency(uint latency)
+    {
+        LOG_FUNC();
+
+        if (IsLinked())
+        {
+            LOG_ERROR("Unable to set latency for XRtspSourceBintr '"
+                << GetName() << "' as it's currently linked");
+            return false;
+        }
+        m_latency = latency;
+        m_pSourceElement->SetAttribute("latency", m_latency);
         return true;
     }
 

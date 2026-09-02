@@ -3097,7 +3097,7 @@ namespace DSL
                 return DSL_RESULT_SOURCE_TAP_REMOVE_FAILED;
             }
             LOG_INFO("RTSP Source '" << name << "' removed Tap successfully");
-                
+
             return DSL_RESULT_SUCCESS;
         }
         catch(...)
@@ -3106,7 +3106,251 @@ namespace DSL
             return DSL_RESULT_SOURCE_THREW_EXCEPTION;
         }
     }
-    
+
+    //*********************************************************************************
+    // XUriSourceBintr / XRtspSourceBintr — ref-app-fidelity source primitives.
+    // See DslSourceBintr.h class-level docs + provenance capture at
+    // splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md.
+    //*********************************************************************************
+
+    DslReturnType Services::SourceXUriNew(const char* name, const char* uri,
+        boolean isLive, uint skipFrames, uint dropFrameInterval)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            if (m_components.find(name) != m_components.end())
+            {
+                LOG_ERROR("Source name '" << name << "' is not unique");
+                return DSL_RESULT_SOURCE_NAME_NOT_UNIQUE;
+            }
+            m_components[name] = DSL_X_URI_SOURCE_NEW(
+                name, uri, isLive, skipFrames, dropFrameInterval);
+
+            LOG_INFO("New X-URI Source '" << name << "' created successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("New X-URI Source '" << name
+                << "' threw exception on create");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SourceXUriUriGet(const char* name, const char** uri)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components, name,
+                XUriSourceBintr);
+
+            DSL_X_URI_SOURCE_PTR pSourceBintr =
+                std::dynamic_pointer_cast<XUriSourceBintr>(m_components[name]);
+
+            *uri = pSourceBintr->GetUri();
+
+            LOG_INFO("X-URI Source '" << name << "' returned URI = '"
+                << *uri << "' successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("X-URI Source '" << name << "' threw exception getting URI");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SourceXUriUriSet(const char* name, const char* uri)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components, name,
+                XUriSourceBintr);
+
+            DSL_X_URI_SOURCE_PTR pSourceBintr =
+                std::dynamic_pointer_cast<XUriSourceBintr>(m_components[name]);
+
+            if (!pSourceBintr->SetUri(uri))
+            {
+                LOG_ERROR("Failed to Set URI '" << uri
+                    << "' for X-URI Source '" << name << "'");
+                return DSL_RESULT_SOURCE_SET_FAILED;
+            }
+            LOG_INFO("X-URI Source '" << name << "' set URI = '"
+                << uri << "' successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("X-URI Source '" << name << "' threw exception setting URI");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SourceXRtspNew(const char* name, const char* uri,
+        uint protocol, uint skipFrames, uint dropFrameInterval, uint latency)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            if (m_components.find(name) != m_components.end())
+            {
+                LOG_ERROR("Source name '" << name << "' is not unique");
+                return DSL_RESULT_SOURCE_NAME_NOT_UNIQUE;
+            }
+            m_components[name] = DSL_X_RTSP_SOURCE_NEW(
+                name, uri, protocol, skipFrames, dropFrameInterval, latency);
+
+            LOG_INFO("New X-RTSP Source '" << name << "' created successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("New X-RTSP Source '" << name
+                << "' threw exception on create");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SourceXRtspUriGet(const char* name, const char** uri)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components, name,
+                XRtspSourceBintr);
+
+            DSL_X_RTSP_SOURCE_PTR pSourceBintr =
+                std::dynamic_pointer_cast<XRtspSourceBintr>(m_components[name]);
+
+            *uri = pSourceBintr->GetUri();
+
+            LOG_INFO("X-RTSP Source '" << name << "' returned URI = '"
+                << *uri << "' successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("X-RTSP Source '" << name << "' threw exception getting URI");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SourceXRtspUriSet(const char* name, const char* uri)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components, name,
+                XRtspSourceBintr);
+
+            DSL_X_RTSP_SOURCE_PTR pSourceBintr =
+                std::dynamic_pointer_cast<XRtspSourceBintr>(m_components[name]);
+
+            if (!pSourceBintr->SetUri(uri))
+            {
+                LOG_ERROR("Failed to Set URI '" << uri
+                    << "' for X-RTSP Source '" << name << "'");
+                return DSL_RESULT_SOURCE_SET_FAILED;
+            }
+            LOG_INFO("X-RTSP Source '" << name << "' set URI = '"
+                << uri << "' successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("X-RTSP Source '" << name << "' threw exception setting URI");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SourceXRtspLatencyGet(const char* name, uint* latency)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components, name,
+                XRtspSourceBintr);
+
+            DSL_X_RTSP_SOURCE_PTR pSourceBintr =
+                std::dynamic_pointer_cast<XRtspSourceBintr>(m_components[name]);
+
+            *latency = pSourceBintr->GetLatency();
+
+            LOG_INFO("X-RTSP Source '" << name << "' returned latency = "
+                << *latency << " ms");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("X-RTSP Source '" << name
+                << "' threw exception getting latency");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SourceXRtspLatencySet(const char* name, uint latency)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components, name,
+                XRtspSourceBintr);
+
+            DSL_X_RTSP_SOURCE_PTR pSourceBintr =
+                std::dynamic_pointer_cast<XRtspSourceBintr>(m_components[name]);
+
+            if (!pSourceBintr->SetLatency(latency))
+            {
+                LOG_ERROR("Failed to set latency for X-RTSP Source '"
+                    << name << "'");
+                return DSL_RESULT_SOURCE_SET_FAILED;
+            }
+            LOG_INFO("X-RTSP Source '" << name << "' set latency = "
+                << latency << " ms");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("X-RTSP Source '" << name
+                << "' threw exception setting latency");
+            return DSL_RESULT_SOURCE_THREW_EXCEPTION;
+        }
+    }
+
     DslReturnType Services::SourceUniqueIdGet(const char* name, int* uniqueId)
     {
         LOG_FUNC();

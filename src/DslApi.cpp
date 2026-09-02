@@ -5573,6 +5573,141 @@ DslReturnType dsl_source_rtsp_tap_remove(const wchar_t* name)
     return DSL::Services::GetServices()->SourceRtspTapRemove(cstrName.c_str());
 }
 
+// ============================================================================
+// XUriSourceBintr / XRtspSourceBintr — ref-app-fidelity source primitives.
+// See DslApi.h for class-level docs + provenance capture at
+// splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md.
+// ============================================================================
+
+DslReturnType dsl_source_x_uri_new(const wchar_t* name, const wchar_t* uri,
+    boolean is_live, uint skip_frames, uint drop_frame_interval)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(uri);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+    std::wstring wstrUri(uri);
+    std::string cstrUri(wstrUri.begin(), wstrUri.end());
+
+    return DSL::Services::GetServices()->SourceXUriNew(
+        cstrName.c_str(), cstrUri.c_str(), is_live,
+        skip_frames, drop_frame_interval);
+}
+
+DslReturnType dsl_source_x_uri_uri_get(const wchar_t* name, const wchar_t** uri)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(uri);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    const char* cUri;
+    static std::wstring wstrUri;
+    uint retval = DSL::Services::GetServices()->SourceXUriUriGet(
+        cstrName.c_str(), &cUri);
+    if (retval != DSL_RESULT_SUCCESS)
+    {
+        *uri = NULL;
+        return retval;
+    }
+    std::string strUri(cUri);
+    wstrUri.assign(strUri.begin(), strUri.end());
+    *uri = wstrUri.c_str();
+    return retval;
+}
+
+DslReturnType dsl_source_x_uri_uri_set(const wchar_t* name, const wchar_t* uri)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(uri);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+    std::wstring wstrUri(uri);
+    std::string cstrUri(wstrUri.begin(), wstrUri.end());
+
+    return DSL::Services::GetServices()->SourceXUriUriSet(
+        cstrName.c_str(), cstrUri.c_str());
+}
+
+DslReturnType dsl_source_x_rtsp_new(const wchar_t* name, const wchar_t* uri,
+    uint protocol, uint skip_frames, uint drop_frame_interval, uint latency)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(uri);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+    std::wstring wstrUri(uri);
+    std::string cstrUri(wstrUri.begin(), wstrUri.end());
+
+    return DSL::Services::GetServices()->SourceXRtspNew(
+        cstrName.c_str(), cstrUri.c_str(), protocol,
+        skip_frames, drop_frame_interval, latency);
+}
+
+DslReturnType dsl_source_x_rtsp_uri_get(const wchar_t* name, const wchar_t** uri)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(uri);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    const char* cUri;
+    static std::wstring wstrUri;
+    uint retval = DSL::Services::GetServices()->SourceXRtspUriGet(
+        cstrName.c_str(), &cUri);
+    if (retval != DSL_RESULT_SUCCESS)
+    {
+        *uri = NULL;
+        return retval;
+    }
+    std::string strUri(cUri);
+    wstrUri.assign(strUri.begin(), strUri.end());
+    *uri = wstrUri.c_str();
+    return retval;
+}
+
+DslReturnType dsl_source_x_rtsp_uri_set(const wchar_t* name, const wchar_t* uri)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(uri);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+    std::wstring wstrUri(uri);
+    std::string cstrUri(wstrUri.begin(), wstrUri.end());
+
+    return DSL::Services::GetServices()->SourceXRtspUriSet(
+        cstrName.c_str(), cstrUri.c_str());
+}
+
+DslReturnType dsl_source_x_rtsp_latency_get(const wchar_t* name, uint* latency)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(latency);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SourceXRtspLatencyGet(
+        cstrName.c_str(), latency);
+}
+
+DslReturnType dsl_source_x_rtsp_latency_set(const wchar_t* name, uint latency)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SourceXRtspLatencySet(
+        cstrName.c_str(), latency);
+}
+
 DslReturnType dsl_source_unique_id_get(const wchar_t* name, int* unique_id)
 {
     RETURN_IF_PARAM_IS_NULL(name);

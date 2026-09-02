@@ -1004,9 +1004,31 @@ namespace DSL {
             dsl_state_change_listener_cb listener);
         
         DslReturnType SourceRtspTapAdd(const char* name, const char* tap);
-    
+
         DslReturnType SourceRtspTapRemove(const char* name);
-        
+
+        // XUriSourceBintr / XRtspSourceBintr — ref-app-fidelity source
+        // primitives (see DslSourceBintr.h class-level docs).
+
+        DslReturnType SourceXUriNew(const char* name, const char* uri,
+            boolean isLive, uint skipFrames, uint dropFrameInterval);
+
+        DslReturnType SourceXUriUriGet(const char* name, const char** uri);
+
+        DslReturnType SourceXUriUriSet(const char* name, const char* uri);
+
+        DslReturnType SourceXRtspNew(const char* name, const char* uri,
+            uint protocol, uint skipFrames, uint dropFrameInterval,
+            uint latency);
+
+        DslReturnType SourceXRtspUriGet(const char* name, const char** uri);
+
+        DslReturnType SourceXRtspUriSet(const char* name, const char* uri);
+
+        DslReturnType SourceXRtspLatencyGet(const char* name, uint* latency);
+
+        DslReturnType SourceXRtspLatencySet(const char* name, uint latency);
+
         DslReturnType SourceUniqueIdGet(const char* name, int* uniqueId);
     
         DslReturnType SourceStreamIdGet(const char* name, int* streamId);

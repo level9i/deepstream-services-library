@@ -97,6 +97,17 @@ namespace DSL
         std::shared_ptr<DuplicateSourceBintr>(new DuplicateSourceBintr(name, \
             original, isLive))
 
+    #define DSL_X_URI_SOURCE_PTR std::shared_ptr<XUriSourceBintr>
+    #define DSL_X_URI_SOURCE_NEW(name, uri, isLive, skipFrames, dropFrameInterval) \
+        std::shared_ptr<XUriSourceBintr>(new XUriSourceBintr(name, uri, \
+            isLive, skipFrames, dropFrameInterval))
+
+    #define DSL_X_RTSP_SOURCE_PTR std::shared_ptr<XRtspSourceBintr>
+    #define DSL_X_RTSP_SOURCE_NEW(name, uri, protocol, \
+        skipFrames, dropFrameInterval, latency) \
+        std::shared_ptr<XRtspSourceBintr>(new XRtspSourceBintr(name, uri, \
+            protocol, skipFrames, dropFrameInterval, latency))
+
     /**
      * @brief Utility function to define/set all capabilities (media, 
      * format, width, height, and frame rate) for a given element.
@@ -2218,7 +2229,8 @@ namespace DSL
     {
     public:
 
-        XUriSourceBintr(const char* name, const char* uri);
+        XUriSourceBintr(const char* name, const char* uri, bool isLive,
+            uint skipFrames, uint dropFrameInterval);
 
         ~XUriSourceBintr();
 
@@ -2254,8 +2266,12 @@ namespace DSL
         void HandleSourceElementOnPadAdded(GstElement* pBin, GstPad* pPad);
 
         /**
-         * @brief child-added dispatch — reference-app parity hook.
-         * Currently a no-op; retained for extension.
+         * @brief child-added dispatch — reference-app parity for
+         * decodebin_child_added. Cascades child-added into nested
+         * decodebins and tunes nvv4l2decoder / nvjpegdec properties
+         * (skip-frames, drop-frame-interval, num-extra-surfaces,
+         * enable-max-performance on Jetson) when the concrete
+         * decoder is introduced by uridecodebin.
          * @param pChildProxy the child-proxy emitting the signal
          * @param pObject the newly added child
          * @param name the child's name
@@ -2272,6 +2288,29 @@ namespace DSL
         void HandleOnSourceSetup(GstElement* pObject, GstElement* arg0);
 
     private:
+
+        /**
+         * @brief Type of frames to skip during decoding; forwarded
+         * to nvv4l2decoder via HandleOnChildAdded when uridecodebin
+         * introduces the decoder.
+         *   (0): decode_all       - Decode all frames
+         *   (1): decode_non_ref   - Decode non-ref frames
+         *   (2): decode_key       - Decode key frames only
+         */
+        uint m_skipFrames;
+
+        /**
+         * @brief Interval to drop frames at the decoder — a value of 5
+         * means every 5th frame is delivered, the rest are dropped.
+         * Forwarded to nvv4l2decoder via HandleOnChildAdded.
+         */
+        uint m_dropFrameInterval;
+
+        /**
+         * @brief Additional decode surfaces beyond the driver minimum;
+         * forwarded to nvv4l2decoder via HandleOnChildAdded.
+         */
+        uint m_numExtraSurfaces;
 
         /**
          * @brief The static links (tee → queues → common) and the
@@ -2417,6 +2456,20 @@ namespace DSL
          * @return true on success, false otherwise
          */
         bool SetUri(const char* uri);
+
+        /**
+         * @brief Gets the current rtspsrc jitter buffer latency.
+         * @return latency in units of ms.
+         */
+        uint GetLatency();
+
+        /**
+         * @brief Sets the rtspsrc jitter buffer latency. Only valid
+         * while the source is unlinked.
+         * @param latency new latency in units of ms
+         * @return true on success, false otherwise
+         */
+        bool SetLatency(uint latency);
 
         /**
          * @brief select-stream dispatch: create the codec-appropriate

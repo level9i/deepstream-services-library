@@ -5776,6 +5776,102 @@ DslReturnType dsl_source_rtsp_tap_add(const wchar_t* name, const wchar_t* tap);
  */
 DslReturnType dsl_source_rtsp_tap_remove(const wchar_t* name);
 
+// ============================================================================
+// XUriSourceBintr / XRtspSourceBintr — ref-app-fidelity source primitives.
+// Verbatim ports of NVIDIA deepstream-app's create_uridecode_src_bin and
+// create_rtsp_src_bin (see DslSourceBintr.h + provenance capture at
+// splish/.cortex/state/research-2026-09-01-deepstream-source-bin-verbatim.md).
+// ============================================================================
+
+/**
+ * @brief Creates a new X-URI Source component matching the deepstream-app
+ * reference create_uridecode_src_bin topology (uridecodebin → tee →
+ * queue → common tail, with drain fakesink branch). Configures NTP sync
+ * only if the URI is rtsp:// (matching reference-app L1310-1312).
+ * @param[in] name unique name for the new source
+ * @param[in] uri URI to source from (file:/... or rtsp://... or http://...)
+ * @param[in] is_live true for a live source (e.g. rtsp://), false for a
+ * seekable non-live source (e.g. file:/...)
+ * @param[in] skip_frames type of frames to skip during decoding, forwarded
+ * to nvv4l2decoder when uridecodebin introduces it. 0=decode_all,
+ * 1=decode_non_ref, 2=decode_key
+ * @param[in] drop_frame_interval frame-drop interval — 5 means every 5th
+ * frame is delivered by decoder, the rest are dropped. 0 disables dropping
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_uri_new(const wchar_t* name, const wchar_t* uri,
+    boolean is_live, uint skip_frames, uint drop_frame_interval);
+
+/**
+ * @brief Returns the current URI of the named X-URI Source.
+ * @param[in] name unique name of the X-URI Source to query
+ * @param[out] uri current URI as set on the underlying uridecodebin
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_uri_uri_get(const wchar_t* name, const wchar_t** uri);
+
+/**
+ * @brief Updates the URI of the named X-URI Source. Only valid while
+ * the source is unlinked.
+ * @param[in] name unique name of the X-URI Source to update
+ * @param[in] uri new URI to set on the underlying uridecodebin
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_uri_uri_set(const wchar_t* name, const wchar_t* uri);
+
+/**
+ * @brief Creates a new X-RTSP Source component matching the deepstream-app
+ * reference create_rtsp_src_bin topology (rtspsrc → codec-dispatched
+ * depay+parser → tee_pre → dec_que → decodebin → cap_filter_q → tee_post
+ * → common tail). configure_source_for_ntp_sync is called unconditionally.
+ * Both internal tees are preserved as extension points; smart-record,
+ * dewarper, reconnect, and state-change listeners are omitted in this port.
+ * @param[in] name unique name for the new source
+ * @param[in] uri RTSP URI to connect to
+ * @param[in] protocol RTP transport bitmask (0x4 = TCP, 0x7 = UDP+UDP-MCAST+TCP)
+ * @param[in] skip_frames forwarded to nvv4l2decoder via decodebin's child-added
+ * @param[in] drop_frame_interval forwarded to nvv4l2decoder
+ * @param[in] latency rtspsrc jitter buffer latency in ms
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_rtsp_new(const wchar_t* name, const wchar_t* uri,
+    uint protocol, uint skip_frames, uint drop_frame_interval, uint latency);
+
+/**
+ * @brief Returns the current URI of the named X-RTSP Source.
+ * @param[in] name unique name of the X-RTSP Source to query
+ * @param[out] uri current URI as set on the underlying rtspsrc
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_rtsp_uri_get(const wchar_t* name, const wchar_t** uri);
+
+/**
+ * @brief Updates the URI of the named X-RTSP Source. Only valid while
+ * the source is unlinked.
+ * @param[in] name unique name of the X-RTSP Source to update
+ * @param[in] uri new URI to set on the underlying rtspsrc
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_rtsp_uri_set(const wchar_t* name, const wchar_t* uri);
+
+/**
+ * @brief Returns the current rtspsrc jitter buffer latency of the named
+ * X-RTSP Source.
+ * @param[in] name unique name of the X-RTSP Source to query
+ * @param[out] latency current jitter buffer latency in ms
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_rtsp_latency_get(const wchar_t* name, uint* latency);
+
+/**
+ * @brief Updates the rtspsrc jitter buffer latency of the named X-RTSP
+ * Source. Only valid while the source is unlinked.
+ * @param[in] name unique name of the X-RTSP Source to update
+ * @param[in] latency new jitter buffer latency in ms
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SOURCE_RESULT otherwise
+ */
+DslReturnType dsl_source_x_rtsp_latency_set(const wchar_t* name, uint latency);
+
 /**
  * @brief Gets the unique-id assigned to the Source component once added
  * to a Pipeline. The unique source-id will be derived from the 
