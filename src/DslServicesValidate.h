@@ -197,12 +197,14 @@ THE SOFTWARE.
         !components[name]->IsType(typeid(ImageStreamSourceBintr)) and  \
         !components[name]->IsType(typeid(InterpipeSourceBintr)) and  \
         !components[name]->IsType(typeid(RtspSourceBintr)) and \
+        !components[name]->IsType(typeid(XRtspSourceBintr)) and \
+        !components[name]->IsType(typeid(XUriSourceBintr)) and \
         !components[name]->IsType(typeid(DuplicateSourceBintr))) \
     { \
         LOG_ERROR("Component '" << name << "' is not a Source"); \
         return DSL_RESULT_SOURCE_COMPONENT_IS_NOT_SOURCE; \
     } \
-}while(0); 
+}while(0);
 
 #define DSL_RETURN_IF_COMPONENT_IS_NOT_IMAGE_SOURCE(components, name) do \
 { \
