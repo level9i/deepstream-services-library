@@ -839,8 +839,14 @@ namespace DSL
         {
             return;
         }
-        m_pParser->UnlinkFromSink();
+        // NULL the fakesink FIRST so parser is unlinking from a NULL
+        // peer (mirrors _finaliseChildPair's ordering, which is what
+        // RotateNow relies on to leave parser's src pad in a re-linkable
+        // state). Unlinking from a still-PLAYING peer leaves parser's
+        // pad state dirty and the subsequent LinkToSink(newContainer)
+        // fails.
         gst_element_set_state(m_pFakeSink->GetGstElement(), GST_STATE_NULL);
+        m_pParser->UnlinkFromSink();
         RemoveChild(m_pFakeSink);
         m_pFakeSink = nullptr;
     }
