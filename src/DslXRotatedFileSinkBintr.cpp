@@ -926,20 +926,16 @@ namespace DSL
                 << " — proceeding without EOS-arrival probe");
         }
 
-        // 2) Send EOS on the container's sink pad — this propagates
-        //    through qtmux → filesink, causing qtmux to write moov and
-        //    filesink to flush and close the fd.
-        GstPad* pContainerSinkPad = gst_element_get_static_pad(
-            container->GetGstElement(), "sink");
-        if (pContainerSinkPad)
-        {
-            gst_pad_send_event(pContainerSinkPad, gst_event_new_eos());
-            gst_object_unref(pContainerSinkPad);
-        }
-        else
+        // 2) Send EOS via gst_element_send_event — the DSL-native
+        //    pattern (see DslNodetr::SendEos). qtmux processes the
+        //    incoming EOS, writes moov, and pushes EOS downstream to
+        //    filesink. gst_pad_send_event on an unpeered sink pad was
+        //    silently doing nothing.
+        if (!gst_element_send_event(container->GetGstElement(),
+                                    gst_event_new_eos()))
         {
             LOG_WARN("XRotatedFileSinkBintr '" << GetName()
-                << "' _finaliseChildPair could not acquire container sink pad");
+                << "' gst_element_send_event(EOS) returned FALSE on container");
         }
 
         // 3) Bounded wait for EOS to arrive at filesink's sink pad.
