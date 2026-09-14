@@ -815,10 +815,30 @@ namespace DSL
 
         AddChild(m_pFakeSink);
 
-        if (!m_pParser->LinkToSink(m_pFakeSink))
+        // Link parser → fakesink with EXPLICIT h264 avc caps. Without
+        // the filter, h264parse's src pad negotiates with fakesink
+        // (which accepts anything) and commits to
+        // stream-format=byte-stream. When Start() later relinks parser
+        // to qtmux (which demands stream-format=avc), gst_element_link
+        // sees the caps mismatch and refuses.
+        //
+        // Bypass DSL's Nodetr::LinkToSink for this transient linkage:
+        // parser's Nodetr link-state stays "unlinked" so the future
+        // Start() can call DSL::LinkToSink(newContainer) without
+        // tripping the "already linked to Sink" pre-check.
+        GstCaps* caps = gst_caps_new_simple("video/x-h264",
+            "stream-format", G_TYPE_STRING, "avc",
+            "alignment", G_TYPE_STRING, "au",
+            NULL);
+        gboolean linked = gst_element_link_pads_filtered(
+            m_pParser->GetGstElement(), "src",
+            m_pFakeSink->GetGstElement(), "sink",
+            caps);
+        gst_caps_unref(caps);
+        if (!linked)
         {
             LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' failed to link parser → fakesink");
+                << "' failed to link parser → fakesink (filtered avc)");
             RemoveChild(m_pFakeSink);
             m_pFakeSink = nullptr;
             return false;
@@ -839,14 +859,16 @@ namespace DSL
         {
             return;
         }
-        // NULL the fakesink FIRST so parser is unlinking from a NULL
-        // peer (mirrors _finaliseChildPair's ordering, which is what
-        // RotateNow relies on to leave parser's src pad in a re-linkable
-        // state). Unlinking from a still-PLAYING peer leaves parser's
-        // pad state dirty and the subsequent LinkToSink(newContainer)
-        // fails.
+        // NULL the fakesink FIRST (mirrors _finaliseChildPair
+        // ordering) so we unlink from a NULL peer.
         gst_element_set_state(m_pFakeSink->GetGstElement(), GST_STATE_NULL);
-        m_pParser->UnlinkFromSink();
+
+        // Manually gst_element_unlink parser → fakesink. This mirrors
+        // the manual gst_element_link_pads_filtered in _installFakeSink
+        // — DSL Nodetr's link state was intentionally never set for
+        // this linkage, so DSL::UnlinkFromSink would refuse.
+        gst_element_unlink(m_pParser->GetGstElement(),
+            m_pFakeSink->GetGstElement());
         RemoveChild(m_pFakeSink);
         m_pFakeSink = nullptr;
     }
