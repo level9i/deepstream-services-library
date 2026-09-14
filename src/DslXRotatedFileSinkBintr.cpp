@@ -863,16 +863,25 @@ namespace DSL
         {
             return;
         }
-        // NULL the fakesink FIRST (mirrors _finaliseChildPair
-        // ordering) so we unlink from a NULL peer.
+        // NULL the fakesink FIRST (mirrors _finaliseChildPair ordering).
         gst_element_set_state(m_pFakeSink->GetGstElement(), GST_STATE_NULL);
 
-        // RemoveChild (gst_bin_remove) auto-unlinks the fakesink's pads
-        // as part of removing it from the bin — this is the same
-        // mechanism the rest of the DSL codebase relies on for element
-        // teardown. Explicit gst_element_unlink beforehand appears to
-        // leave stale peer state on parser's src pad that then blocks
-        // the subsequent LinkToSink(newContainer) in Start().
+        // Reset parser's src pad state before the peer is destroyed —
+        // send flush-start / flush-stop cycle on parser's src pad. This
+        // mirrors the pattern DslNodetr.h:738-743 uses when unlinking
+        // from a muxer's requested sink pad, and it clears any latched
+        // "not-linked flow error" state on parser's pad that would
+        // otherwise block the subsequent LinkToSink(newContainer).
+        GstPad* pParserSrc = gst_element_get_static_pad(
+            m_pParser->GetGstElement(), "src");
+        if (pParserSrc)
+        {
+            gst_pad_send_event(pParserSrc, gst_event_new_flush_start());
+            gst_pad_send_event(pParserSrc, gst_event_new_flush_stop(FALSE));
+            gst_object_unref(pParserSrc);
+        }
+
+        // RemoveChild (gst_bin_remove) auto-unlinks fakesink's pads.
         RemoveChild(m_pFakeSink);
         m_pFakeSink = nullptr;
     }
