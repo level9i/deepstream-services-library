@@ -375,11 +375,18 @@ namespace DSL
         DSL_ELEMENT_PTR oldFileSink = m_pFileSink;
         std::string closedPath = m_currentFragmentPath;
 
-        // Unlink parser → oldContainer and oldContainer → oldFileSink.
+        // Unlink parser → oldContainer only. LEAVE oldContainer →
+        // oldFileSink intact so the EOS injected into oldContainer's
+        // sink pad below can propagate through qtmux → filesink,
+        // delivering the moov trailer to disk. Pre-unlinking that link
+        // severs the moov write path (that was the original bug —
+        // moov landed nowhere on rotation-driven closes).
         m_pParser->UnlinkFromSink();
-        oldContainer->UnlinkFromSink();
 
-        // Finalise the closed fragment (EOS → wait → NULL).
+        // Finalise the closed fragment (EOS → wait for EOS at filesink
+        // → NULL). _finaliseChildPair NULLs both elements before it
+        // returns, at which point the container→filesink link is
+        // implicitly torn down.
         _finaliseChildPair(oldContainer, oldFileSink);
         _postFragmentMessage(XROTATED_FILE_FRAGMENT_CLOSED, closedPath);
 
@@ -591,9 +598,12 @@ namespace DSL
         DSL_ELEMENT_PTR oldFileSink = m_pFileSink;
         std::string closedPath = m_currentFragmentPath;
 
-        // Unlink parser → oldContainer → oldFileSink.
+        // Unlink parser → oldContainer only. Leave oldContainer →
+        // oldFileSink intact so EOS can propagate through qtmux to
+        // filesink, delivering the moov trailer to disk. See the
+        // matching change in RotateNow for why pre-unlinking that link
+        // is the wrong thing.
         m_pParser->UnlinkFromSink();
-        oldContainer->UnlinkFromSink();
 
         // Finalise the closed fragment (EOS → bounded wait → NULL).
         _finaliseChildPair(oldContainer, oldFileSink);
