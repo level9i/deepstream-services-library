@@ -375,22 +375,26 @@ namespace DSL
         DSL_ELEMENT_PTR oldFileSink = m_pFileSink;
         std::string closedPath = m_currentFragmentPath;
 
-        // Unlink parser → oldContainer only. LEAVE oldContainer →
-        // oldFileSink intact so the EOS injected into oldContainer's
-        // sink pad below can propagate through qtmux → filesink,
-        // delivering the moov trailer to disk. Pre-unlinking that link
-        // severs the moov write path (that was the original bug —
-        // moov landed nowhere on rotation-driven closes).
-        m_pParser->UnlinkFromSink();
+        LOG_INFO("XRotatedFileSinkBintr '" << GetName()
+            << "' rotation: finalising '" << closedPath
+            << "' BEFORE any unlink (parser + container + filesink all"
+            << " still linked; buffers held upstream at encoder-src probe)");
 
-        // Finalise the closed fragment (EOS → wait for EOS at filesink
-        // → NULL). _finaliseChildPair NULLs both elements before it
-        // returns, at which point the container→filesink link is
-        // implicitly torn down.
+        // FINALIZE FIRST, UNLINK AFTER. Do NOT unlink parser →
+        // oldContainer before finalize — for muxers with request sink
+        // pads (qtmux), the unlink releases the request pad, after
+        // which the EOS we inject has no pad to reach. The correct
+        // order is:
+        //  a) Send EOS while parser → oldContainer → oldFileSink is
+        //     fully linked; block probe upstream keeps new data out.
+        //  b) Wait for EOS to reach oldFileSink's sink pad.
+        //  c) NULL oldFileSink then oldContainer.
+        //  d) THEN unlink parser (the link is dead by now anyway).
         _finaliseChildPair(oldContainer, oldFileSink);
         _postFragmentMessage(XROTATED_FILE_FRAGMENT_CLOSED, closedPath);
 
-        // Remove the old children from this Bintr.
+        // Now safe to unlink and drop the old pair.
+        m_pParser->UnlinkFromSink();
         RemoveChild(oldContainer);
         RemoveChild(oldFileSink);
 
