@@ -44,6 +44,44 @@ namespace DSL
     // Default bounded wait for mp4mux finalise, in seconds.
     static const uint DEFAULT_FINALIZE_TIMEOUT_SEC = 5;
 
+    // -----------------------------------------------------------------
+    // EOS-arrival probe used by _finaliseChildPair. qtmux finalises its
+    // output (flush samples → write moov → push EOS downstream) upon
+    // receiving EOS at its sink pad. Once the EOS event reaches
+    // filesink's sink pad, ALL preceding buffers — including the moov
+    // backpatch — have been delivered to filesink. Only then is it safe
+    // to NULL filesink; force-NULL before that races with the moov
+    // write and produces truncated files (no moov, or 36-byte ftyp-
+    // only shells).
+    // -----------------------------------------------------------------
+    struct EosArrivalCtx
+    {
+        GMutex mutex;
+        GCond cond;
+        bool seen;
+    };
+
+    static GstPadProbeReturn _eosArrivalProbeCb(GstPad* pad,
+        GstPadProbeInfo* info, gpointer userData)
+    {
+        if (!(GST_PAD_PROBE_INFO_TYPE(info)
+              & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM))
+        {
+            return GST_PAD_PROBE_OK;
+        }
+        GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
+        if (GST_EVENT_TYPE(event) != GST_EVENT_EOS)
+        {
+            return GST_PAD_PROBE_OK;
+        }
+        EosArrivalCtx* ctx = static_cast<EosArrivalCtx*>(userData);
+        g_mutex_lock(&ctx->mutex);
+        ctx->seen = true;
+        g_cond_broadcast(&ctx->cond);
+        g_mutex_unlock(&ctx->mutex);
+        return GST_PAD_PROBE_OK;
+    }
+
     // -------------------------------------------------------------------
     // Ctor / dtor
     // -------------------------------------------------------------------
@@ -851,15 +889,42 @@ namespace DSL
     bool XRotatedFileSinkBintr::_finaliseChildPair(
         DSL_ELEMENT_PTR container, DSL_ELEMENT_PTR filesink)
     {
-        // Send EOS on the container's sink pad — this propagates through
-        // qtmux → filesink, causing qtmux to write moov and filesink
-        // to flush and close the fd.
-        GstPad* pSinkPad = gst_element_get_static_pad(
-            container->GetGstElement(), "sink");
-        if (pSinkPad)
+        // 1) Install an EOS-arrival probe on filesink's sink pad. qtmux
+        //    processes an incoming EOS by flushing buffered samples to
+        //    mdat, writing moov, and pushing EOS downstream. When the EOS
+        //    event surfaces at filesink's sink pad we KNOW both mdat and
+        //    moov are on their way to filesink's fd — this is the correct
+        //    wait, not the meaningless state-wait we used to do.
+        EosArrivalCtx ctx;
+        g_mutex_init(&ctx.mutex);
+        g_cond_init(&ctx.cond);
+        ctx.seen = false;
+
+        GstPad* pFileSinkSinkPad = gst_element_get_static_pad(
+            filesink->GetGstElement(), "sink");
+        gulong eosProbeId = 0;
+        if (pFileSinkSinkPad)
         {
-            gst_pad_send_event(pSinkPad, gst_event_new_eos());
-            gst_object_unref(pSinkPad);
+            eosProbeId = gst_pad_add_probe(pFileSinkSinkPad,
+                GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+                (GstPadProbeCallback)_eosArrivalProbeCb, &ctx, NULL);
+        }
+        else
+        {
+            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
+                << "' _finaliseChildPair could not acquire filesink sink pad"
+                << " — proceeding without EOS-arrival probe");
+        }
+
+        // 2) Send EOS on the container's sink pad — this propagates
+        //    through qtmux → filesink, causing qtmux to write moov and
+        //    filesink to flush and close the fd.
+        GstPad* pContainerSinkPad = gst_element_get_static_pad(
+            container->GetGstElement(), "sink");
+        if (pContainerSinkPad)
+        {
+            gst_pad_send_event(pContainerSinkPad, gst_event_new_eos());
+            gst_object_unref(pContainerSinkPad);
         }
         else
         {
@@ -867,25 +932,44 @@ namespace DSL
                 << "' _finaliseChildPair could not acquire container sink pad");
         }
 
-        // Bounded wait for filesink to reach READY (i.e. finalised).
-        gint64 endTime = g_get_monotonic_time()
-            + (G_TIME_SPAN_SECOND * m_finalizeTimeoutSec);
-        GstState curState;
-        GstState pendingState;
-        while (g_get_monotonic_time() < endTime)
+        // 3) Bounded wait for EOS to arrive at filesink's sink pad.
+        bool eosArrived = false;
+        if (pFileSinkSinkPad)
         {
-            gst_element_get_state(filesink->GetGstElement(),
-                &curState, &pendingState, 100 * GST_MSECOND);
-            if (curState <= GST_STATE_READY)
+            gint64 endTimeUs = g_get_monotonic_time()
+                + (G_TIME_SPAN_SECOND * m_finalizeTimeoutSec);
+            g_mutex_lock(&ctx.mutex);
+            while (!ctx.seen)
             {
-                break;
+                if (!g_cond_wait_until(&ctx.cond, &ctx.mutex, endTimeUs))
+                {
+                    break; // timed out
+                }
             }
+            eosArrived = ctx.seen;
+            g_mutex_unlock(&ctx.mutex);
+
+            gst_pad_remove_probe(pFileSinkSinkPad, eosProbeId);
+            gst_object_unref(pFileSinkSinkPad);
         }
 
-        // Force NULL regardless of the wait outcome.
+        if (!eosArrived)
+        {
+            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
+                << "' EOS did not reach filesink within "
+                << m_finalizeTimeoutSec
+                << "s — file will likely be truncated (no moov)");
+        }
+
+        // 4) NULL filesink FIRST — its state-change to NULL flushes any
+        //    pending write buffer and closes the fd on the final,
+        //    moov-complete bytes. Then NULL the container.
         gst_element_set_state(filesink->GetGstElement(), GST_STATE_NULL);
         gst_element_set_state(container->GetGstElement(), GST_STATE_NULL);
-        return true;
+
+        g_cond_clear(&ctx.cond);
+        g_mutex_clear(&ctx.mutex);
+        return eosArrived;
     }
 
     void XRotatedFileSinkBintr::_postFragmentMessage(const char* structureName,
