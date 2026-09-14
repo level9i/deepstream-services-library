@@ -863,12 +863,12 @@ namespace DSL
         // ordering) so we unlink from a NULL peer.
         gst_element_set_state(m_pFakeSink->GetGstElement(), GST_STATE_NULL);
 
-        // Manually gst_element_unlink parser → fakesink. This mirrors
-        // the manual gst_element_link_pads_filtered in _installFakeSink
-        // — DSL Nodetr's link state was intentionally never set for
-        // this linkage, so DSL::UnlinkFromSink would refuse.
-        gst_element_unlink(m_pParser->GetGstElement(),
-            m_pFakeSink->GetGstElement());
+        // RemoveChild (gst_bin_remove) auto-unlinks the fakesink's pads
+        // as part of removing it from the bin — this is the same
+        // mechanism the rest of the DSL codebase relies on for element
+        // teardown. Explicit gst_element_unlink beforehand appears to
+        // leave stale peer state on parser's src pad that then blocks
+        // the subsequent LinkToSink(newContainer) in Start().
         RemoveChild(m_pFakeSink);
         m_pFakeSink = nullptr;
     }
