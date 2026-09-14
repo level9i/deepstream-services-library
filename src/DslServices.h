@@ -1457,9 +1457,35 @@ namespace DSL {
         DslReturnType SinkWindowEglForceAspectRatioSet(const char* name, 
             boolean force);
             
-        DslReturnType SinkFileNew(const char* name, const char* filepath, 
+        DslReturnType SinkFileNew(const char* name, const char* filepath,
             uint codec, uint container, uint bit_rate, uint interval);
-            
+
+        // level9i splish-6.3-patched (2026-09-14 valve-splitmuxsink cascade fix)
+        DslReturnType SinkXRotatedFileNew(const char* name,
+            const char* filepath, uint bitrate, uint interval);
+
+        DslReturnType SinkXRotatedFileMaxSizeTimeGet(const char* name,
+            uint64_t* maxSizeTime);
+
+        DslReturnType SinkXRotatedFileMaxSizeTimeSet(const char* name,
+            uint64_t maxSizeTime);
+
+        DslReturnType SinkXRotatedFileRotateNow(const char* name);
+
+        DslReturnType SinkXRotatedFileCurrentFragmentPathGet(const char* name,
+            const char** path);
+
+        DslReturnType SinkXRotatedFileStop(const char* name);
+
+        DslReturnType SinkXRotatedFileStart(const char* name);
+
+        DslReturnType SinkXRotatedFileIsRecordingGet(const char* name,
+            boolean* isRecording);
+
+        DslReturnType SinkXRotatedFileStoppedInitiallySet(const char* name,
+            boolean stoppedInitially);
+
+
         DslReturnType SinkRecordNew(const char* name, const char* outdir, 
             uint codec, uint container, uint bitrate, uint interval, 
             dsl_record_client_listener_cb clientListener);

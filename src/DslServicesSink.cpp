@@ -27,6 +27,8 @@ THE SOFTWARE.
 #include "DslServices.h"
 #include "DslServicesValidate.h"
 #include "DslSinkBintr.h"
+// level9i splish-6.3-patched (2026-09-14 valve-splitmuxsink cascade fix)
+#include "DslXRotatedFileSinkBintr.h"
 
 namespace DSL
 {
@@ -3630,6 +3632,279 @@ namespace DSL
         catch(...)
         {
             LOG_ERROR("Sink '" << name << "' threw an exception removing Pad Probe Handler");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // level9i splish-6.3-patched (2026-09-14 valve-splitmuxsink cascade fix)
+    // XRotatedFileSink services — mirror SinkFileNew shape.
+    // -------------------------------------------------------------------
+
+    DslReturnType Services::SinkXRotatedFileNew(const char* name,
+        const char* filepath, uint bitrate, uint interval)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            // ensure component name uniqueness
+            if (m_components.find(name) != m_components.end())
+            {
+                LOG_ERROR("Sink name '" << name << "' is not unique");
+                return DSL_RESULT_SINK_NAME_NOT_UNIQUE;
+            }
+            m_components[name] = DSL_X_ROTATED_FILE_SINK_NEW(name,
+                filepath, bitrate, interval);
+
+            LOG_INFO("New XRotatedFile Sink '" << name
+                << "' created successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("New Sink '" << name << "' threw exception on create");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileMaxSizeTimeGet(const char* name,
+        uint64_t* maxSizeTime)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            *maxSizeTime = pXRotatedFileSinkBintr->GetMaxSizeTime();
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on GetMaxSizeTime");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileMaxSizeTimeSet(const char* name,
+        uint64_t maxSizeTime)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            if (!pXRotatedFileSinkBintr->SetMaxSizeTime(maxSizeTime))
+            {
+                LOG_ERROR("XRotatedFile Sink '" << name
+                    << "' failed to set max-size-time = " << maxSizeTime);
+                return DSL_RESULT_SINK_SET_FAILED;
+            }
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on SetMaxSizeTime");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileRotateNow(const char* name)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            if (!pXRotatedFileSinkBintr->RotateNow())
+            {
+                LOG_ERROR("XRotatedFile Sink '" << name
+                    << "' RotateNow failed");
+                return DSL_RESULT_SINK_SET_FAILED;
+            }
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on RotateNow");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileCurrentFragmentPathGet(
+        const char* name, const char** path)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            *path = pXRotatedFileSinkBintr->GetCurrentFragmentPath();
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on GetCurrentFragmentPath");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileStop(const char* name)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            if (!pXRotatedFileSinkBintr->Stop())
+            {
+                LOG_ERROR("XRotatedFile Sink '" << name
+                    << "' Stop failed");
+                return DSL_RESULT_SINK_SET_FAILED;
+            }
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on Stop");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileStart(const char* name)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            if (!pXRotatedFileSinkBintr->Start())
+            {
+                LOG_ERROR("XRotatedFile Sink '" << name
+                    << "' Start failed");
+                return DSL_RESULT_SINK_SET_FAILED;
+            }
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on Start");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileIsRecordingGet(const char* name,
+        boolean* isRecording)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            *isRecording = pXRotatedFileSinkBintr->IsRecording() ? 1 : 0;
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on IsRecordingGet");
+            return DSL_RESULT_SINK_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::SinkXRotatedFileStoppedInitiallySet(
+        const char* name, boolean stoppedInitially)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_COMPONENT_NAME_NOT_FOUND(m_components, name);
+            DSL_RETURN_IF_COMPONENT_IS_NOT_CORRECT_TYPE(m_components,
+                name, XRotatedFileSinkBintr);
+
+            DSL_X_ROTATED_FILE_SINK_PTR pXRotatedFileSinkBintr =
+                std::dynamic_pointer_cast<XRotatedFileSinkBintr>(
+                    m_components[name]);
+
+            if (!pXRotatedFileSinkBintr->SetStoppedInitially(
+                stoppedInitially != 0))
+            {
+                LOG_ERROR("XRotatedFile Sink '" << name
+                    << "' SetStoppedInitially failed (called after LinkAll?)");
+                return DSL_RESULT_SINK_SET_FAILED;
+            }
+            return DSL_RESULT_SUCCESS;
+        }
+        catch (...)
+        {
+            LOG_ERROR("XRotatedFile Sink '" << name
+                << "' threw exception on SetStoppedInitially");
             return DSL_RESULT_SINK_THREW_EXCEPTION;
         }
     }

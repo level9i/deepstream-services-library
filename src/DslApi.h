@@ -7589,8 +7589,117 @@ DslReturnType dsl_sink_window_egl_force_aspect_ratio_set(const wchar_t* name,
  * @param[in] interval iframe interval to encode at
  * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure
  */
-DslReturnType dsl_sink_file_new(const wchar_t* name, const wchar_t* file_path, 
+DslReturnType dsl_sink_file_new(const wchar_t* name, const wchar_t* file_path,
      uint codec, uint container, uint bitrate, uint interval);
+
+/**
+ * @brief level9i splish-6.3-patched (2026-09-14 valve-splitmuxsink cascade fix).
+ *
+ * Creates a new, uniquely named XRotatedFile Sink component — a rolling MP4
+ * file sink that composes `qtmux` + `filesink` internally and rotates on an
+ * auto timer (see max-size-time verbs) or explicit rotate-now action.
+ * Unlike splitmuxsink, this sink issues its own EOS to the internal mp4mux
+ * on each rotation boundary and on pipeline stop, so files finalise cleanly
+ * even when an upstream valve is dropping buffers.
+ *
+ * V1 constraints: qtmux/MP4 only; time-based rotation only (no byte-size).
+ *
+ * @param[in] name unique component name for the new XRotatedFile Sink
+ * @param[in] file_path printf-style location template, e.g.
+ *   "/data/roll-%02d.mp4" — fragment index substitutes on each rotation.
+ * @param[in] bitrate encoder bitrate in bits/sec (0 = default 4Mbps).
+ * @param[in] interval iframe interval to encode at.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_new(const wchar_t* name,
+    const wchar_t* file_path, uint bitrate, uint interval);
+
+/**
+ * @brief Gets the current auto-rotation period for the named XRotatedFile Sink.
+ * @param[in] name name of the XRotatedFile Sink to query.
+ * @param[out] max_size_time current auto-rotation period in nanoseconds;
+ *   0 indicates auto-rotation is disabled.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_max_size_time_get(const wchar_t* name,
+    uint64_t* max_size_time);
+
+/**
+ * @brief Sets the auto-rotation period for the named XRotatedFile Sink.
+ * @param[in] name name of the XRotatedFile Sink to update.
+ * @param[in] max_size_time new auto-rotation period in nanoseconds;
+ *   set to 0 to disable auto-rotation. Manual rotate-now remains available.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_max_size_time_set(const wchar_t* name,
+    uint64_t max_size_time);
+
+/**
+ * @brief Rotates the current fragment now — finalises the current file and
+ * opens a fresh fragment. Blocks upstream flow briefly (typically 50-200ms
+ * on Xavier NX).
+ * @param[in] name name of the XRotatedFile Sink to rotate.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_rotate_now(const wchar_t* name);
+
+/**
+ * @brief Returns the path of the currently-open fragment on disk.
+ * @param[in] name name of the XRotatedFile Sink to query.
+ * @param[out] path output pointer to the current fragment path. Owned by
+ *   DSL — do not free.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_current_fragment_path_get(
+    const wchar_t* name, const wchar_t** path);
+
+/**
+ * @brief Stops file production on this XRotatedFile Sink. Finalises the
+ * current fragment cleanly (EOS to muxer + bounded wait) and swaps in an
+ * internal fakesink. The encoder chain (queue → transform → capsfilter →
+ * encoder → parser) keeps running and consuming buffers — to gate
+ * encoder cycles as well, combine with an upstream valve. No-op if the
+ * sink is already stopped.
+ * @param[in] name name of the XRotatedFile Sink to stop.
+ * @return DSL_RESULT_SUCCESS on success (or already-stopped),
+ *   DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_stop(const wchar_t* name);
+
+/**
+ * @brief Starts file production on this XRotatedFile Sink. Creates a
+ * fresh mp4mux + filesink pair for the next fragment path, links it into
+ * the chain, and re-arms the auto-rotation timer if configured. No-op if
+ * the sink is already recording.
+ * @param[in] name name of the XRotatedFile Sink to start.
+ * @return DSL_RESULT_SUCCESS on success (or already-recording),
+ *   DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_start(const wchar_t* name);
+
+/**
+ * @brief Query current recording state of the XRotatedFile Sink.
+ * @param[in] name name of the XRotatedFile Sink to query.
+ * @param[out] is_recording 1 if recording, 0 if stopped.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure.
+ */
+DslReturnType dsl_sink_x_rotated_file_is_recording_get(
+    const wchar_t* name, boolean* is_recording);
+
+/**
+ * @brief Configure the deploy-time recording state. MUST be called
+ * BEFORE this sink is added to a pipeline / branch (i.e. before
+ * LinkAll). When true, the sink deploys in the stopped state and does
+ * not open an initial fragment; a fakesink absorbs encoded frames until
+ * dsl_sink_x_rotated_file_start is called. Default is false (deploys
+ * recording).
+ * @param[in] name name of the XRotatedFile Sink to configure.
+ * @param[in] stopped_initially 1 = deploy stopped, 0 = deploy recording.
+ * @return DSL_RESULT_SUCCESS on success, DSL_RESULT_SINK_RESULT on failure
+ *   (including "called after LinkAll").
+ */
+DslReturnType dsl_sink_x_rotated_file_stopped_initially_set(
+    const wchar_t* name, boolean stopped_initially);
 
 /**
  * @brief creates a new, uniquely named File Record component

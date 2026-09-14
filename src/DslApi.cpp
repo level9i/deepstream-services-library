@@ -24,6 +24,9 @@ THE SOFTWARE.
 
 #include "Dsl.h"
 #include "DslServices.h"
+// level9i splish-6.3-patched (2026-09-14) — cstring for std::strlen in
+// dsl_sink_x_rotated_file_current_fragment_path_get.
+#include <cstring>
 
 #define RETURN_IF_PARAM_IS_NULL(input_string) do \
 { \
@@ -8162,9 +8165,138 @@ DslReturnType dsl_sink_file_new(const wchar_t* name, const wchar_t* file_path,
     std::wstring wstrPath(file_path);
     std::string cstrPath(wstrPath.begin(), wstrPath.end());
 
-    return DSL::Services::GetServices()->SinkFileNew(cstrName.c_str(), 
+    return DSL::Services::GetServices()->SinkFileNew(cstrName.c_str(),
         cstrPath.c_str(), codec, container, bitrate, interval);
-}     
+}
+
+// -------------------------------------------------------------------
+// level9i splish-6.3-patched (2026-09-14 valve-splitmuxsink cascade fix)
+// XRotatedFile Sink verbs.
+// -------------------------------------------------------------------
+
+DslReturnType dsl_sink_x_rotated_file_new(const wchar_t* name,
+    const wchar_t* file_path, uint bitrate, uint interval)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(file_path);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+    std::wstring wstrPath(file_path);
+    std::string cstrPath(wstrPath.begin(), wstrPath.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileNew(cstrName.c_str(),
+        cstrPath.c_str(), bitrate, interval);
+}
+
+DslReturnType dsl_sink_x_rotated_file_max_size_time_get(const wchar_t* name,
+    uint64_t* max_size_time)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(max_size_time);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileMaxSizeTimeGet(
+        cstrName.c_str(), max_size_time);
+}
+
+DslReturnType dsl_sink_x_rotated_file_max_size_time_set(const wchar_t* name,
+    uint64_t max_size_time)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileMaxSizeTimeSet(
+        cstrName.c_str(), max_size_time);
+}
+
+DslReturnType dsl_sink_x_rotated_file_rotate_now(const wchar_t* name)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileRotateNow(
+        cstrName.c_str());
+}
+
+DslReturnType dsl_sink_x_rotated_file_current_fragment_path_get(
+    const wchar_t* name, const wchar_t** path)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(path);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    const char* cstrPath = NULL;
+    DslReturnType result = DSL::Services::GetServices()->
+        SinkXRotatedFileCurrentFragmentPathGet(cstrName.c_str(), &cstrPath);
+    if (result != DSL_RESULT_SUCCESS)
+    {
+        return result;
+    }
+
+    // Convert the returned narrow string into a wide string and expose
+    // a pointer into a thread-local static buffer. TODO(xRotatedFileSink):
+    // adopt the same wchar buffer convention DSL uses for its other
+    // *_get(wchar_t**) accessors (search DslApi.cpp for the wchar buffer
+    // pattern to match exactly).
+    static thread_local std::wstring wstrPath;
+    wstrPath.assign(cstrPath, cstrPath + std::strlen(cstrPath));
+    *path = wstrPath.c_str();
+    return DSL_RESULT_SUCCESS;
+}
+
+DslReturnType dsl_sink_x_rotated_file_stop(const wchar_t* name)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileStop(cstrName.c_str());
+}
+
+DslReturnType dsl_sink_x_rotated_file_start(const wchar_t* name)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileStart(cstrName.c_str());
+}
+
+DslReturnType dsl_sink_x_rotated_file_is_recording_get(
+    const wchar_t* name, boolean* is_recording)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+    RETURN_IF_PARAM_IS_NULL(is_recording);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileIsRecordingGet(
+        cstrName.c_str(), is_recording);
+}
+
+DslReturnType dsl_sink_x_rotated_file_stopped_initially_set(
+    const wchar_t* name, boolean stopped_initially)
+{
+    RETURN_IF_PARAM_IS_NULL(name);
+
+    std::wstring wstrName(name);
+    std::string cstrName(wstrName.begin(), wstrName.end());
+
+    return DSL::Services::GetServices()->SinkXRotatedFileStoppedInitiallySet(
+        cstrName.c_str(), stopped_initially);
+}
 
 DslReturnType dsl_sink_encode_settings_get(const wchar_t* name,
     uint* codec, uint* bitrate, uint* interval)
