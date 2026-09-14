@@ -597,23 +597,27 @@ namespace DSL
             m_rotationTimerId = 0;
         }
 
-        // Snapshot the current pair so we can dispose after unlink.
+        // Snapshot the current pair so we can dispose after finalise.
         DSL_ELEMENT_PTR oldContainer = m_pContainer;
         DSL_ELEMENT_PTR oldFileSink = m_pFileSink;
         std::string closedPath = m_currentFragmentPath;
 
-        // Unlink parser → oldContainer only. Leave oldContainer →
-        // oldFileSink intact so EOS can propagate through qtmux to
-        // filesink, delivering the moov trailer to disk. See the
-        // matching change in RotateNow for why pre-unlinking that link
-        // is the wrong thing.
-        m_pParser->UnlinkFromSink();
+        LOG_INFO("XRotatedFileSinkBintr '" << GetName()
+            << "' Stop: finalising '" << closedPath
+            << "' BEFORE any unlink (parser + container + filesink all"
+            << " still linked; block probe holding buffers upstream)");
 
-        // Finalise the closed fragment (EOS → bounded wait → NULL).
+        // FINALISE FIRST, UNLINK AFTER. Matches the RotateNow ordering
+        // fix (commit 7e3e202): for muxers with request sink pads (qtmux),
+        // UnlinkFromSink releases the request pad, after which the EOS
+        // has no pad to reach. Send EOS while parser → oldContainer →
+        // oldFileSink is fully linked, wait for EOS at filesink, THEN
+        // NULL both, THEN unlink parser.
         _finaliseChildPair(oldContainer, oldFileSink);
         _postFragmentMessage(XROTATED_FILE_FRAGMENT_CLOSED, closedPath);
 
-        // Drop the old children from this Bintr.
+        // Now safe to unlink and drop the old pair.
+        m_pParser->UnlinkFromSink();
         RemoveChild(oldContainer);
         RemoveChild(oldFileSink);
         m_pContainer = nullptr;
