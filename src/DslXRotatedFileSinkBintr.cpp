@@ -662,10 +662,18 @@ namespace DSL
             _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
                 m_currentFragmentPath);
         }
-        // Else: stoppedInitially deploy — the pair is already linked
-        // from LinkAll (fragment 0). Just opening the valve makes it
-        // live; the fragment-opened for path 0 was already posted at
-        // LinkAll time.
+        else
+        {
+            // stoppedInitially deploy — the pair is already linked from
+            // LinkAll (fragment 0). Just opening the valve makes it
+            // live. Post fragment-opened here (not at LinkAll time) so
+            // "start()" is what the JS-side observes as opening the
+            // fragment; matches the tactical test's expectation of a
+            // fragment-opened event on the first Start after
+            // stoppedInitially.
+            _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
+                m_currentFragmentPath);
+        }
 
         // Open the valve — buffers flow to the container.
         _setValveDrop(false);
