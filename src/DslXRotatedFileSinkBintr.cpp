@@ -705,59 +705,9 @@ namespace DSL
             << "' valve.drop = " << (drop ? "true" : "false"));
     }
 
-    // -------------------------------------------------------------------
-    // Stop/Start helpers
-    // -------------------------------------------------------------------
-
-    bool XRotatedFileSinkBintr::_installRotationBlock(GstPad*& outProbePad)
-    {
-        outProbePad = gst_element_get_static_pad(
-            m_pEncoder->GetGstElement(), "src");
-        if (!outProbePad)
-        {
-            return false;
-        }
-
-        m_padBlocked = false;
-        m_rotationProbeId = gst_pad_add_probe(outProbePad,
-            GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM,
-            (GstPadProbeCallback)_rotationBlockProbeCb, this, NULL);
-
-        gint64 endTime = g_get_monotonic_time()
-            + (G_TIME_SPAN_SECOND * m_finalizeTimeoutSec);
-        DslMutex localMutex;
-        LOCK_MUTEX_FOR_CURRENT_SCOPE(&localMutex);
-        while (!m_padBlocked
-            && g_get_monotonic_time() < endTime)
-        {
-            g_usleep(1000);
-        }
-        if (!m_padBlocked)
-        {
-            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
-                << "' block probe did not fire within "
-                << m_finalizeTimeoutSec << "s; proceeding");
-            return false;
-        }
-        return true;
-    }
-
-    void XRotatedFileSinkBintr::_releaseRotationBlock(GstPad* pProbePad)
-    {
-        if (pProbePad && m_rotationProbeId)
-        {
-            gst_pad_remove_probe(pProbePad, m_rotationProbeId);
-            m_rotationProbeId = 0;
-        }
-        if (pProbePad)
-        {
-            gst_object_unref(pProbePad);
-        }
-    }
-
-    // B4-PIVOT: _installFakeSink and _removeFakeSink removed. The valve
-    // replaces the fakesink swap; parser is permanently linked to
-    // (queue→)valve and only the container/filesink pair moves.
+    // B4-PIVOT: _installRotationBlock / _releaseRotationBlock /
+    // _installFakeSink / _removeFakeSink all removed. The valve at the
+    // top of the container/filesink pair is the single gating mechanism.
 
     // -------------------------------------------------------------------
     // Private helpers
