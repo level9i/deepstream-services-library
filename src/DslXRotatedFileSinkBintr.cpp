@@ -98,6 +98,8 @@ namespace DSL
         , m_padBlocked(false)
         , m_isRecording(true)
         , m_stoppedInitially(false)
+        , m_bufferCountSinceOpen(0)
+        , m_bufferCountProbeId(0)
     {
         LOG_FUNC();
 
@@ -126,6 +128,31 @@ namespace DSL
 
         AddChild(m_pPostParserQueue);
         AddChild(m_pValve);
+
+        // Fix B (2026-09-15): install a buffer-count probe on the
+        // valve's src pad. Increments m_bufferCountSinceOpen for every
+        // buffer that reaches the container. Used by RotateNow to
+        // skip rotation of an empty fragment (see
+        // m_bufferCountSinceOpen docstring). Probe stays installed for
+        // the sink's lifetime; when the sink is unlinked or the valve
+        // is dropping, no buffers flow and the counter stays 0.
+        {
+            GstPad* pValveSrcPad = gst_element_get_static_pad(
+                m_pValve->GetGstElement(), "src");
+            if (pValveSrcPad)
+            {
+                m_bufferCountProbeId = gst_pad_add_probe(pValveSrcPad,
+                    GST_PAD_PROBE_TYPE_BUFFER,
+                    (GstPadProbeCallback)_bufferCountProbeCb, this, NULL);
+                gst_object_unref(pValveSrcPad);
+            }
+            else
+            {
+                LOG_WARN("XRotatedFileSinkBintr '" << name
+                    << "' failed to acquire valve src pad for"
+                    << " buffer-count probe — empty-fragment skip disabled");
+            }
+        }
 
         // Prime the current fragment path for the initial fragment.
         m_currentFragmentPath = _renderFragmentPath(m_currentIndex);
@@ -168,6 +195,22 @@ namespace DSL
         {
             g_source_remove(m_rotationTimerId);
             m_rotationTimerId = 0;
+        }
+
+        // Fix B (2026-09-15): remove the buffer-count probe from the
+        // valve's src pad if it was installed. The probe callback holds
+        // a `this` pointer, so it MUST be removed before the object is
+        // destroyed.
+        if (m_bufferCountProbeId && m_pValve)
+        {
+            GstPad* pValveSrcPad = gst_element_get_static_pad(
+                m_pValve->GetGstElement(), "src");
+            if (pValveSrcPad)
+            {
+                gst_pad_remove_probe(pValveSrcPad, m_bufferCountProbeId);
+                gst_object_unref(pValveSrcPad);
+            }
+            m_bufferCountProbeId = 0;
         }
 
         if (IsLinked())
@@ -352,6 +395,29 @@ namespace DSL
         {
             LOG_INFO("XRotatedFileSinkBintr '" << GetName()
                 << "' RotateNow called while stopped — no-op");
+            return true;
+        }
+
+        // Fix B (2026-09-15): skip rotation of an empty fragment. If
+        // no buffers have reached the container since the last valve-
+        // open, the current fragment is empty — sending EOS would
+        // produce a 0-byte file (moov never written because filesink
+        // never opened) and cost m_finalizeTimeoutSec on the EOS-
+        // arrival probe. Leave the current fragment in place and let
+        // the auto-rotate timer retry on the next tick.
+        //
+        // This covers two cases with one guard: (1) slow-startup
+        // sources — RTSP handshake + jitter-buffer priming can exceed
+        // the rotation cadence, so the timer's first fire arrives
+        // before any data; (2) mid-stream droughts — a stalled
+        // upstream produces the same empty-fragment condition.
+        if (m_bufferCountSinceOpen.load(std::memory_order_relaxed) == 0)
+        {
+            LOG_INFO("XRotatedFileSinkBintr '" << GetName()
+                << "' RotateNow skipped — fragment " << m_currentIndex
+                << " ('" << m_currentFragmentPath
+                << "') has received 0 buffers since valve-open."
+                << " Keeping timer armed.");
             return true;
         }
 
@@ -724,6 +790,16 @@ namespace DSL
             return;
         }
         m_pValve->SetAttribute("drop", drop);
+        // Fix B (2026-09-15): opening the valve starts a new
+        // "buffer-count window" for the current fragment. Reset the
+        // counter here so RotateNow can distinguish empty-fragment
+        // (skip) from populated-fragment (proceed). Every valve-open
+        // path (LinkAll, RotateNow post-swap, Start) routes through
+        // this function so this is the only reset point needed.
+        if (!drop)
+        {
+            m_bufferCountSinceOpen.store(0, std::memory_order_relaxed);
+        }
         LOG_INFO("XRotatedFileSinkBintr '" << GetName()
             << "' valve.drop = " << (drop ? "true" : "false"));
     }
@@ -906,5 +982,20 @@ namespace DSL
             static_cast<XRotatedFileSinkBintr*>(userData);
         self->RotateNow();
         return G_SOURCE_CONTINUE;
+    }
+
+    GstPadProbeReturn XRotatedFileSinkBintr::_bufferCountProbeCb(
+        GstPad* pad, GstPadProbeInfo* info, gpointer userData)
+    {
+        // Fix B (2026-09-15): increment the per-fragment buffer counter
+        // on every buffer that passes through the valve. Runs on the
+        // streaming thread; m_bufferCountSinceOpen is atomic so the
+        // reader (RotateNow, on the main thread) sees a consistent
+        // value. Relaxed ordering is sufficient — we only need
+        // eventual visibility, not synchronisation with other memory.
+        XRotatedFileSinkBintr* self =
+            static_cast<XRotatedFileSinkBintr*>(userData);
+        self->m_bufferCountSinceOpen.fetch_add(1, std::memory_order_relaxed);
+        return GST_PAD_PROBE_OK;
     }
 }

@@ -39,6 +39,8 @@ THE SOFTWARE.
 #ifndef _DSL_X_ROTATED_FILE_SINK_BINTR_H
 #define _DSL_X_ROTATED_FILE_SINK_BINTR_H
 
+#include <atomic>
+
 #include "Dsl.h"
 #include "DslApi.h"
 #include "DslBintr.h"
@@ -293,6 +295,37 @@ namespace DSL
          */
         DSL_ELEMENT_PTR m_pPostParserQueue;
 
+        /**
+         * @brief Fix B (2026-09-15): count of buffers that have reached
+         * the container since the last valve-open. Incremented by
+         * _bufferCountProbeCb (installed on the valve's src pad for the
+         * sink's lifetime); reset to 0 by _setValveDrop(false) so a
+         * fresh window starts at every valve-open (LinkAll, RotateNow,
+         * Start).
+         *
+         * Used by RotateNow to skip rotation of an empty fragment:
+         * when this counter is 0 at rotation time, the current fragment
+         * has received no data since it went live. Sending EOS would
+         * produce a 0-byte file (moov never written because filesink
+         * never opened) and cost m_finalizeTimeoutSec of wall-time on
+         * the EOS-arrival probe. The skip leaves the current fragment
+         * in place and lets the auto-rotate timer retry on the next
+         * tick — usually a subsequent tick sees data flowing and
+         * proceeds normally.
+         *
+         * Necessary for slow-startup sources (RTSP handshake + jitter-
+         * buffer priming can exceed the rotation cadence) and self-
+         * healing during mid-stream droughts.
+         */
+        std::atomic<uint32_t> m_bufferCountSinceOpen;
+
+        /**
+         * @brief Fix B (2026-09-15): probe id for the buffer-count probe
+         * on m_pValve's src pad. Installed in the ctor after m_pValve is
+         * created; removed in the dtor. 0 when no probe is installed.
+         */
+        gulong m_bufferCountProbeId;
+
         // ---------------------------------------------------------
         // Internal helpers (B4-PIVOT retained)
         // ---------------------------------------------------------
@@ -351,6 +384,16 @@ namespace DSL
          * firing until SetMaxSizeTime(0) removes it.
          */
         static gboolean _autoRotateTimerCb(gpointer userData);
+
+        /**
+         * @brief Fix B (2026-09-15): buffer-count probe on the valve's
+         * src pad. Increments m_bufferCountSinceOpen for every buffer
+         * that passes through the valve (i.e. reaches the container).
+         * Installed for the sink's lifetime; when the sink is unlinked
+         * or the valve is dropping, no buffers reach this probe.
+         */
+        static GstPadProbeReturn _bufferCountProbeCb(GstPad* pad,
+            GstPadProbeInfo* info, gpointer userData);
     };
 }
 
