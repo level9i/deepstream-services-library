@@ -175,8 +175,29 @@ namespace DSL
          * bus-watch. Allows notifications to be sent out from the main-loop
          * context rather than the bus thread.
          * @return false always to destroy the one-shot timer calling this callback.
+         *
+         * @deprecated Superseded by DeliverBusMessage() +
+         * BusMessageEnvelope (2026-09-15). The single-slot design
+         * `m_lastBusMessage*` had a lossy race under rapid bus messages
+         * (two arrivals within ~ms would collapse into two deliveries
+         * of the later one). Kept for now behind ctor init but unused.
          */
         int NotifyBusMessageHandlers();
+
+        /**
+         * @brief Per-message delivery — invoked on the GLib main context
+         * with a heap envelope carrying that specific message's data.
+         * Avoids the single-slot race that plagued the m_lastBusMessage*
+         * approach. See envelope struct at .cpp file scope.
+         * @param[in] messageType GstMessageType as uint32
+         * @param[in] srcName wide-char source element name (empty if none)
+         * @param[in] structName wide-char structure name (empty if none)
+         * @param[in] structSerialised wide-char serialised structure (empty if none)
+         */
+        void DeliverBusMessage(uint32_t messageType,
+            const std::wstring& srcName,
+            const std::wstring& structName,
+            const std::wstring& structSerialised);
 
     protected:
 

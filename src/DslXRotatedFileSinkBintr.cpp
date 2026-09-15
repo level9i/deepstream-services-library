@@ -867,11 +867,6 @@ namespace DSL
     void XRotatedFileSinkBintr::_postFragmentMessage(const char* structureName,
         const std::string& location)
     {
-        // X5-DIAG: log every fragment message post to identify phantom
-        // duplicates observed at the JS side.
-        LOG_INFO("XRotatedFileSinkBintr '" << GetName()
-            << "' [X5-DIAG] POST structure='" << structureName
-            << "' location='" << location << "'");
         GstElement* pGstElement = GetGstElement();
         if (!pGstElement)
         {
@@ -884,10 +879,7 @@ namespace DSL
             NULL);
         GstMessage* pMessage = gst_message_new_element(
             GST_OBJECT(pGstElement), pStructure);
-        gboolean posted = gst_element_post_message(pGstElement, pMessage);
-        LOG_INFO("XRotatedFileSinkBintr '" << GetName()
-            << "' [X5-DIAG] post_message returned "
-            << (posted ? "TRUE" : "FALSE"));
+        gst_element_post_message(pGstElement, pMessage);
     }
 
     GstPadProbeReturn XRotatedFileSinkBintr::_rotationBlockProbeCb(

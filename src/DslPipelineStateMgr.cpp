@@ -320,6 +320,22 @@ namespace DSL
         return true;
     }
 
+    // Forward declarations for the bus-message envelope delivery
+    // machinery — full definitions after the class methods.
+    struct BusMessageEnvelope;
+    static gboolean BusMessageEnvelopeDeliveryHandler(gpointer data);
+
+    // Full BusMessageEnvelope struct definition (must precede
+    // HandleBusWatchMessage's use of `new BusMessageEnvelope()`).
+    struct BusMessageEnvelope
+    {
+        PipelineStateMgr* pStateMgr;
+        uint32_t          messageType;
+        std::wstring      sourceElementName;
+        std::wstring      structureName;
+        std::wstring      structureSerialised;
+    };
+
     bool PipelineStateMgr::HandleBusWatchMessage(GstMessage* pMessage)
     {
         LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_busWatchMutex);
@@ -469,21 +485,32 @@ namespace DSL
                 type == GST_MESSAGE_WARNING ||
                 type == GST_MESSAGE_INFO)
             {
-                LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_lastBusMessageMutex);
-
-                m_lastBusMessageType = static_cast<uint32_t>(type);
+                // Snapshot the message into a heap-allocated envelope
+                // that travels with the deferred notification callback.
+                //
+                // Rationale: two bus messages arriving within a few ms
+                // used to race — HandleBusWatchMessage overwrote the
+                // shared m_lastBusMessage* fields on every arrival, and
+                // by the time the g_timeout_add(1) callback fired to
+                // deliver them, BOTH deferred callbacks read whatever
+                // the LATEST arrival had left in the shared slot, so
+                // the earlier message was silently replaced by a
+                // duplicate of the later one. Observed on
+                // XRotatedFileSinkBintr rotation, where CLOSED and
+                // OPENED are posted 6ms apart — JS received two OPENs,
+                // zero CLOSEs. Per-message envelopes fix this by
+                // giving each notification its own private data.
+                BusMessageEnvelope* env = new BusMessageEnvelope();
+                env->pStateMgr = this;
+                env->messageType = static_cast<uint32_t>(type);
 
                 const gchar* srcName = pMessage->src ?
                     GST_OBJECT_NAME(pMessage->src) : NULL;
                 if (srcName)
                 {
                     std::string cstrSrc(srcName);
-                    m_lastBusMessageSourceElementName =
+                    env->sourceElementName =
                         std::wstring(cstrSrc.begin(), cstrSrc.end());
-                }
-                else
-                {
-                    m_lastBusMessageSourceElementName.clear();
                 }
 
                 const GstStructure* structure = gst_message_get_structure(pMessage);
@@ -493,42 +520,22 @@ namespace DSL
                     if (structName)
                     {
                         std::string cstrStructName(structName);
-                        m_lastBusMessageStructureName =
+                        env->structureName =
                             std::wstring(cstrStructName.begin(), cstrStructName.end());
-                    }
-                    else
-                    {
-                        m_lastBusMessageStructureName.clear();
                     }
                     gchar* structStr = gst_structure_to_string(structure);
                     if (structStr)
                     {
-                        // ⚠️ CAVEAT: byte-to-wchar widening (not a decode) —
-                        // element/structure names are ASCII in practice, but
-                        // structure_serialised carries arbitrary element-authored
-                        // content that CAN include non-ASCII (file paths on
-                        // non-ASCII filesystems, tag payloads with unicode).
-                        // Byte values > 0x7F silently corrupt on this widening.
-                        // Callers who need full unicode fidelity should decode
-                        // from a separate UTF-8 surface (not offered here).
+                        // Same byte-to-wchar widening caveat as before —
+                        // ASCII fidelity only for structureSerialised.
                         std::string cstrStructStr(structStr);
-                        m_lastBusMessageStructureSerialised =
+                        env->structureSerialised =
                             std::wstring(cstrStructStr.begin(), cstrStructStr.end());
                         g_free(structStr);
                     }
-                    else
-                    {
-                        m_lastBusMessageStructureSerialised.clear();
-                    }
-                }
-                else
-                {
-                    m_lastBusMessageStructureName.clear();
-                    m_lastBusMessageStructureSerialised.clear();
                 }
 
-                m_busMessageNotificationTimerId = g_timeout_add(1,
-                    BusMessageHandlersNotificationHandler, this);
+                g_timeout_add(1, BusMessageEnvelopeDeliveryHandler, env);
             }
         }
 
@@ -738,6 +745,58 @@ namespace DSL
     {
         return static_cast<PipelineStateMgr*>(pPipeline)->
             NotifyBusMessageHandlers();
+    }
+
+    // -----------------------------------------------------------------
+    // Bus-message per-envelope delivery (2026-09-15). Replaces the
+    // lossy single-slot NotifyBusMessageHandlers path. Each bus message
+    // gets its own heap envelope handed to the deferred timer; the
+    // timer callback delivers the specific message and frees the
+    // envelope. Eliminates the race where two rapid arrivals collapsed
+    // into two deliveries of the later one.
+    // -----------------------------------------------------------------
+
+    static gboolean BusMessageEnvelopeDeliveryHandler(gpointer data)
+    {
+        BusMessageEnvelope* env = static_cast<BusMessageEnvelope*>(data);
+        env->pStateMgr->DeliverBusMessage(
+            env->messageType,
+            env->sourceElementName,
+            env->structureName,
+            env->structureSerialised);
+        delete env;
+        return G_SOURCE_REMOVE;
+    }
+
+    void PipelineStateMgr::DeliverBusMessage(uint32_t messageType,
+        const std::wstring& srcName,
+        const std::wstring& structName,
+        const std::wstring& structSerialised)
+    {
+        LOG_FUNC();
+
+        dsl_bus_message_info info;
+        info.message_type = messageType;
+        info.source_element_name = srcName.empty() ? NULL : srcName.c_str();
+        info.structure_name = structName.empty() ? NULL : structName.c_str();
+        info.structure_serialised = structSerialised.empty()
+            ? NULL : structSerialised.c_str();
+
+        // m_busMessageHandlers is only mutated from the same
+        // main-context thread that runs this callback, so no extra
+        // locking is required here.
+        for (auto const& imap : m_busMessageHandlers)
+        {
+            try
+            {
+                imap.first(&info, imap.second);
+            }
+            catch (...)
+            {
+                LOG_ERROR("PipelineStateMgr threw exception calling "
+                    "Client Bus-Message-Handler (envelope path)");
+            }
+        }
     }
 
 } // DSL
