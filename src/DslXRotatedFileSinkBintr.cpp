@@ -230,13 +230,18 @@ namespace DSL
 
         m_isLinked = true;
 
-        // Fragment 0 is open regardless of state — post the opened
-        // message so the JS-side mirror gets the initial path. If the
-        // sink deployed stopped, no data will reach filesink until
-        // Start() opens the valve, but roll-00.mp4 will still exist as
-        // an empty file on disk (filesink opens the fd on PLAYING).
-        _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
-            m_currentFragmentPath);
+        // Fragment 0's OPENED event: for RECORDING deploy, post here at
+        // LinkAll time — no explicit Start() call is expected, so this
+        // is the sink's only "you have a live fragment now" signal.
+        // For STOPPED-INITIAL deploy, DO NOT post yet — Start() will
+        // post when the valve opens, matching the "start() is when the
+        // fragment becomes live" semantic. Posting from both LinkAll
+        // and Start would produce a duplicate open for fragment 0.
+        if (!m_stoppedInitially)
+        {
+            _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
+                m_currentFragmentPath);
+        }
         LOG_INFO("XRotatedFileSinkBintr '" << GetName()
             << "' linked (" << (m_stoppedInitially ? "STOPPED" : "RECORDING")
             << "); initial fragment '" << m_currentFragmentPath << "'");
