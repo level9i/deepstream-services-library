@@ -251,60 +251,58 @@ namespace DSL
         bool m_padBlocked;
 
         /**
-         * @brief current recording state. True = producing fragments to
-         * m_pContainer/m_pFileSink; false = discarding to m_pFakeSink.
-         * Starts true unless SetStoppedInitially(true) was called before
-         * LinkAll.
+         * @brief current recording state. True = valve open, buffers
+         * flow to m_pContainer/m_pFileSink; false = valve closed,
+         * buffers dropped upstream. Starts true unless
+         * SetStoppedInitially(true) was called before LinkAll.
          */
         bool m_isRecording;
 
         /**
-         * @brief deploy-state override — determines whether LinkAll wires
-         * the initial container/filesink chain (false) or the fakesink
-         * shortcut (true). Ignored after LinkAll has run.
+         * @brief deploy-state override — determines whether the initial
+         * container/filesink pair is linked at LinkAll time. When true,
+         * the valve is closed and the container/filesink pair is NOT
+         * linked; the first Start() call creates and links the pair.
+         * Ignored after LinkAll has run.
          */
         bool m_stoppedInitially;
 
         /**
-         * @brief the fakesink used while stopped. nullptr while recording.
+         * @brief B4-PIVOT (2026-09-15): the valve that gates buffer flow
+         * from parser to container. Permanently linked between parser
+         * and the container/filesink pair. valve.drop=true halts data
+         * flow to the container without disturbing parser's src pad.
+         *
+         * Replaced m_pFakeSink. Rationale: swapping parser's peer
+         * (parser→qtmux ⇌ parser→fakesink) left parser's src pad in a
+         * state that broke subsequent gst_element_link(parser, qtmux)
+         * from returning success on Start-from-stopped. Keeping parser
+         * always-linked to a stable valve, with the container swap
+         * happening on the OTHER side of the valve, sidesteps the
+         * problem entirely.
          */
-        DSL_ELEMENT_PTR m_pFakeSink;
+        DSL_ELEMENT_PTR m_pValve;
+
+        /**
+         * @brief B4-PIVOT (2026-09-15): leaky-downstream queue between
+         * parser and valve. Absorbs the brief buffer accumulation
+         * during rotation/stop/start transitions without back-pressuring
+         * the encoder chain. Leaky-downstream means older buffers are
+         * dropped when the queue fills — matches the "brief data loss
+         * during rotation" tolerance stated in the design.
+         */
+        DSL_ELEMENT_PTR m_pPostParserQueue;
 
         // ---------------------------------------------------------
-        // Internal helpers for Stop/Start
+        // Internal helpers (B4-PIVOT retained)
         // ---------------------------------------------------------
 
         /**
-         * @brief Install a downstream-block pad probe on the encoder's
-         * src pad and wait bounded for the probe to fire (i.e. first
-         * buffer arrives). Shared by RotateNow/Stop/Start.
-         * @param[out] outProbePad the acquired probe pad (caller unrefs).
-         * @return true if a buffer was observed within the finalize
-         * timeout, false if the wait timed out. Even on false the pad
-         * is blocked and safe to proceed — the caller MUST still remove
-         * the probe before returning.
+         * @brief Sets the valve's drop property (true = drop buffers,
+         * false = pass through). Wraps the SetAttribute + logging.
+         * @param[in] drop new drop state.
          */
-        bool _installRotationBlock(GstPad*& outProbePad);
-
-        /**
-         * @brief Remove the rotation block probe installed by
-         * _installRotationBlock and unref the probe pad.
-         */
-        void _releaseRotationBlock(GstPad* pProbePad);
-
-        /**
-         * @brief Create and add the fakesink used during Stop(). Links
-         * m_pParser → m_pFakeSink and syncs its state to the parent.
-         * @return true on success.
-         */
-        bool _installFakeSink();
-
-        /**
-         * @brief Set the fakesink to NULL, remove it from the bin, and
-         * clear m_pFakeSink. Called from Start() and from the ctor path
-         * when transitioning out of the stopped-initial deploy.
-         */
-        void _removeFakeSink();
+        void _setValveDrop(bool drop);
 
         // ---------------------------------------------------------
         // Internal helpers

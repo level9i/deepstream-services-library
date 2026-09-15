@@ -98,9 +98,34 @@ namespace DSL
         , m_padBlocked(false)
         , m_isRecording(true)
         , m_stoppedInitially(false)
-        , m_pFakeSink(nullptr)
     {
         LOG_FUNC();
+
+        // B4-PIVOT: create the post-parser queue + valve. Both live
+        // permanently between parser and the container/filesink pair.
+        // The queue is leaky-downstream to absorb brief buffer bursts
+        // during rotation/stop/start without back-pressuring the
+        // encoder. The valve is the gate: drop=true halts data flow to
+        // the container without touching parser's src pad state.
+        char queueName[256];
+        char valveName[256];
+        std::snprintf(queueName, sizeof(queueName),
+            "%s-post-parser-queue", name);
+        std::snprintf(valveName, sizeof(valveName), "%s-valve", name);
+        m_pPostParserQueue = DSL_ELEMENT_NEW("queue", queueName);
+        m_pValve = DSL_ELEMENT_NEW("valve", valveName);
+
+        // leaky=2 = downstream (drops oldest buffers when full).
+        m_pPostParserQueue->SetAttribute("leaky", 2);
+        m_pPostParserQueue->SetAttribute("max-size-buffers", 30);
+        m_pPostParserQueue->SetAttribute("max-size-bytes", 0);
+        m_pPostParserQueue->SetAttribute("max-size-time", 0);
+
+        // Start valve open — LinkAll flips it closed if stoppedInitially.
+        m_pValve->SetAttribute("drop", false);
+
+        AddChild(m_pPostParserQueue);
+        AddChild(m_pValve);
 
         // Prime the current fragment path for the initial fragment.
         m_currentFragmentPath = _renderFragmentPath(m_currentIndex);
@@ -119,6 +144,7 @@ namespace DSL
         LOG_INFO("  initial-fragment   : " << m_currentFragmentPath);
         LOG_INFO("  codec              : " << m_codec);
         LOG_INFO("  container          : qtmux (mp4, fixed for v1)");
+        LOG_INFO("  gating             : valve+leaky-queue (B4-PIVOT)");
         if (m_bitrate)
         {
             LOG_INFO("  bitrate            : " << m_bitrate);
@@ -165,47 +191,24 @@ namespace DSL
             return false;
         }
 
-        // Encoder chain is always linked. The tail differs depending on
-        // whether we deploy in the recording or stopped state.
+        // B4-PIVOT: encoder chain + post-parser queue + valve are ALWAYS
+        // linked. The container/filesink pair is linked downstream of
+        // the valve. Recording/stopped state is a valve.drop flag,
+        // not a topology change.
         if (!m_pQueue->LinkToSink(m_pTransform) or
             !m_pTransform->LinkToSink(m_pCapsFilter) or
             !m_pCapsFilter->LinkToSink(m_pEncoder) or
-            !m_pEncoder->LinkToSink(m_pParser))
+            !m_pEncoder->LinkToSink(m_pParser) or
+            !m_pParser->LinkToSink(m_pPostParserQueue) or
+            !m_pPostParserQueue->LinkToSink(m_pValve))
         {
             LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' failed to link encoder chain");
+                << "' failed to link encoder chain + queue/valve");
             return false;
         }
 
-        if (m_stoppedInitially)
-        {
-            // Discard the pre-created initial container/filesink pair —
-            // deploy in the stopped state with a fakesink tail.
-            if (m_pContainer)
-            {
-                RemoveChild(m_pContainer);
-                m_pContainer = nullptr;
-            }
-            if (m_pFileSink)
-            {
-                RemoveChild(m_pFileSink);
-                m_pFileSink = nullptr;
-            }
-            if (!_installFakeSink())
-            {
-                LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                    << "' failed to install initial fakesink for stopped deploy");
-                return false;
-            }
-            m_isRecording = false;
-            m_isLinked = true;
-            LOG_INFO("XRotatedFileSinkBintr '" << GetName()
-                << "' linked in STOPPED state; awaiting Start()");
-            return true;
-        }
-
-        // Recording deploy — link the initial container/filesink pair.
-        if (!m_pParser->LinkToSink(m_pContainer) or
+        // Link valve → container → filesink (the swap-on-rotation pair).
+        if (!m_pValve->LinkToSink(m_pContainer) or
             !m_pContainer->LinkToSink(m_pFileSink))
         {
             LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
@@ -213,14 +216,30 @@ namespace DSL
             return false;
         }
 
+        // Apply deploy-time state via the valve.
+        if (m_stoppedInitially)
+        {
+            _setValveDrop(true);
+            m_isRecording = false;
+        }
+        else
+        {
+            _setValveDrop(false);
+            m_isRecording = true;
+        }
+
         m_isLinked = true;
 
-        // First fragment is now open — post the opened message.
+        // Fragment 0 is open regardless of state — post the opened
+        // message so the JS-side mirror gets the initial path. If the
+        // sink deployed stopped, no data will reach filesink until
+        // Start() opens the valve, but roll-00.mp4 will still exist as
+        // an empty file on disk (filesink opens the fd on PLAYING).
         _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
             m_currentFragmentPath);
         LOG_INFO("XRotatedFileSinkBintr '" << GetName()
-            << "' linked; initial fragment opened at '"
-            << m_currentFragmentPath << "'");
+            << "' linked (" << (m_stoppedInitially ? "STOPPED" : "RECORDING")
+            << "); initial fragment '" << m_currentFragmentPath << "'");
 
         return true;
     }
@@ -236,10 +255,19 @@ namespace DSL
             return;
         }
 
-        // Unlink the tail element based on current state.
-        if (m_isRecording && m_pContainer)
+        // B4-PIVOT: unlink the full always-linked chain plus the
+        // container→filesink pair if present.
+        if (m_pContainer)
         {
             m_pContainer->UnlinkFromSink();
+        }
+        if (m_pValve)
+        {
+            m_pValve->UnlinkFromSink();
+        }
+        if (m_pPostParserQueue)
+        {
+            m_pPostParserQueue->UnlinkFromSink();
         }
         m_pParser->UnlinkFromSink();
         m_pEncoder->UnlinkFromSink();
@@ -322,127 +350,78 @@ namespace DSL
             return true;
         }
 
-        // Prepare the next fragment path FIRST so we can pass it into
-        // the fresh child pair without racing on m_currentIndex.
+        // B4-PIVOT (2026-09-15): valve-gated rotation.
+        // The valve upstream of the container acts as the "block probe"
+        // — closing it halts data flow to the container so we can
+        // safely finalise + swap the container/filesink pair. Parser is
+        // permanently linked to (queue→)valve; only valve's DOWNSTREAM
+        // side is touched during rotation. No more parser-peer swap
+        // dance.
         uint nextIndex = m_currentIndex + 1;
         std::string nextPath = _renderFragmentPath(nextIndex);
 
-        // Install a downstream-block pad probe on the encoder's src pad.
-        // This idles the flow before we tear down the muxer, so we do
-        // not drop mid-buffer or corrupt the container.
-        GstPad* pProbePad = gst_element_get_static_pad(
-            m_pEncoder->GetGstElement(), "src");
-        if (!pProbePad)
-        {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' RotateNow could not acquire encoder src pad");
-            return false;
-        }
-
-        m_padBlocked = false;
-        m_rotationProbeId = gst_pad_add_probe(pProbePad,
-            GST_PAD_PROBE_TYPE_BLOCK_DOWNSTREAM,
-            (GstPadProbeCallback)_rotationBlockProbeCb, this, NULL);
-
-        // Wait bounded for the probe callback to fire (i.e. for a buffer
-        // to reach the pad). If nothing is flowing we accept the risk
-        // and continue — we then can't guarantee a keyframe boundary,
-        // but any buffered data in filesink will still finalise cleanly
-        // via the EOS below.
-        gint64 endTime = g_get_monotonic_time()
-            + (G_TIME_SPAN_SECOND * m_finalizeTimeoutSec);
-        {
-            DslMutex localMutex;
-            LOCK_MUTEX_FOR_CURRENT_SCOPE(&localMutex);
-            while (!m_padBlocked
-                && g_get_monotonic_time() < endTime)
-            {
-                // Poll — probe callback flips m_padBlocked from its own thread.
-                g_usleep(1000);
-            }
-        }
-
-        if (!m_padBlocked)
-        {
-            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
-                << "' RotateNow — no buffer arrived within "
-                << m_finalizeTimeoutSec
-                << "s; proceeding regardless");
-        }
-
-        // Snapshot the current pair before we swap them out.
         DSL_ELEMENT_PTR oldContainer = m_pContainer;
         DSL_ELEMENT_PTR oldFileSink = m_pFileSink;
         std::string closedPath = m_currentFragmentPath;
 
         LOG_INFO("XRotatedFileSinkBintr '" << GetName()
-            << "' rotation: finalising '" << closedPath
-            << "' BEFORE any unlink (parser + container + filesink all"
-            << " still linked; buffers held upstream at encoder-src probe)");
+            << "' rotation: closing valve, finalising '" << closedPath
+            << "', opening fresh pair '" << nextPath << "'");
 
-        // FINALIZE FIRST, UNLINK AFTER. Do NOT unlink parser →
-        // oldContainer before finalize — for muxers with request sink
-        // pads (qtmux), the unlink releases the request pad, after
-        // which the EOS we inject has no pad to reach. The correct
-        // order is:
-        //  a) Send EOS while parser → oldContainer → oldFileSink is
-        //     fully linked; block probe upstream keeps new data out.
-        //  b) Wait for EOS to reach oldFileSink's sink pad.
-        //  c) NULL oldFileSink then oldContainer.
-        //  d) THEN unlink parser (the link is dead by now anyway).
+        // 1) Close the valve — no new data reaches container.
+        _setValveDrop(true);
+
+        // 2) Finalise the closed fragment while valve→oldContainer→
+        //    oldFileSink is still fully linked. Sends EOS to
+        //    oldContainer; waits for EOS at oldFileSink's sink pad
+        //    (moov write complete); NULLs both.
         _finaliseChildPair(oldContainer, oldFileSink);
         _postFragmentMessage(XROTATED_FILE_FRAGMENT_CLOSED, closedPath);
 
-        // Now safe to unlink and drop the old pair.
-        m_pParser->UnlinkFromSink();
+        // 3) Unlink and drop the old pair. valve's src pad is now
+        //    unpeered, which is fine — valve.drop=true means no
+        //    buffers are being pushed downstream anyway.
+        m_pValve->UnlinkFromSink();
         RemoveChild(oldContainer);
         RemoveChild(oldFileSink);
 
-        // Create the fresh pair.
+        // 4) Create the fresh pair and link valve → newContainer →
+        //    newFileSink. This is a stable link — valve's src pad
+        //    doesn't have the caps-commitment problem that h264parse
+        //    had, so gst_element_link cleanly requests a fresh qtmux
+        //    sink_%u.
         DSL_ELEMENT_PTR newContainer;
         DSL_ELEMENT_PTR newFileSink;
         if (!_createChildPair(nextPath, newContainer, newFileSink))
         {
             LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' RotateNow failed to create new mp4mux/filesink pair");
-            // Release the block probe to unstick the pipeline.
-            gst_pad_remove_probe(pProbePad, m_rotationProbeId);
-            gst_object_unref(pProbePad);
-            m_rotationProbeId = 0;
+                << "' RotateNow failed to create fresh pair");
             return false;
         }
-
-        // Link parser → new container → new filesink.
-        if (!m_pParser->LinkToSink(newContainer) or
+        if (!m_pValve->LinkToSink(newContainer) or
             !newContainer->LinkToSink(newFileSink))
         {
             LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' RotateNow failed to link new pair");
-            gst_pad_remove_probe(pProbePad, m_rotationProbeId);
-            gst_object_unref(pProbePad);
-            m_rotationProbeId = 0;
+                << "' RotateNow failed to link fresh pair to valve");
             return false;
         }
 
-        // Sync state on the new elements so they enter PLAYING before
-        // the probe is released and buffers flow.
+        // 5) Sync the fresh pair up to PLAYING so it's ready before
+        //    we open the valve.
         if (!gst_element_sync_state_with_parent(newContainer->GetGstElement()) or
             !gst_element_sync_state_with_parent(newFileSink->GetGstElement()))
         {
             LOG_WARN("XRotatedFileSinkBintr '" << GetName()
-                << "' sync_state_with_parent returned failure on new pair");
+                << "' sync_state_with_parent returned failure on fresh pair");
         }
 
-        // Update state.
+        // 6) Update state and open the valve — buffers flow into the
+        //    fresh mp4mux.
         m_pContainer = newContainer;
         m_pFileSink = newFileSink;
         m_currentIndex = nextIndex;
         m_currentFragmentPath = nextPath;
-
-        // Release the pad probe — buffers flow into the fresh mp4mux.
-        gst_pad_remove_probe(pProbePad, m_rotationProbeId);
-        gst_object_unref(pProbePad);
-        m_rotationProbeId = 0;
+        _setValveDrop(false);
 
         _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
             m_currentFragmentPath);
@@ -578,16 +557,10 @@ namespace DSL
             return true;
         }
 
-        // Block upstream flow at the encoder src pad (same probe point as
-        // RotateNow).
-        GstPad* pProbePad = nullptr;
-        _installRotationBlock(pProbePad);
-        if (!pProbePad)
-        {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' Stop could not acquire encoder src pad");
-            return false;
-        }
+        // B4-PIVOT: close the valve (halts data to container), cancel
+        // auto-rotate, finalise the current fragment, tear down the
+        // pair. No fakesink swap — the valve is the gate. Parser stays
+        // permanently linked to the queue/valve upstream side.
 
         // Cancel auto-rotation timer if armed — it's for the recording
         // state only. Start() re-arms it.
@@ -597,48 +570,32 @@ namespace DSL
             m_rotationTimerId = 0;
         }
 
-        // Snapshot the current pair so we can dispose after finalise.
+        // 1) Close the valve.
+        _setValveDrop(true);
+
+        // 2) Finalise the current fragment (EOS to container → wait for
+        //    arrival at filesink → NULL both). Same _finaliseChildPair
+        //    that RotateNow uses.
         DSL_ELEMENT_PTR oldContainer = m_pContainer;
         DSL_ELEMENT_PTR oldFileSink = m_pFileSink;
         std::string closedPath = m_currentFragmentPath;
 
-        LOG_INFO("XRotatedFileSinkBintr '" << GetName()
-            << "' Stop: finalising '" << closedPath
-            << "' BEFORE any unlink (parser + container + filesink all"
-            << " still linked; block probe holding buffers upstream)");
-
-        // FINALISE FIRST, UNLINK AFTER. Matches the RotateNow ordering
-        // fix (commit 7e3e202): for muxers with request sink pads (qtmux),
-        // UnlinkFromSink releases the request pad, after which the EOS
-        // has no pad to reach. Send EOS while parser → oldContainer →
-        // oldFileSink is fully linked, wait for EOS at filesink, THEN
-        // NULL both, THEN unlink parser.
         _finaliseChildPair(oldContainer, oldFileSink);
         _postFragmentMessage(XROTATED_FILE_FRAGMENT_CLOSED, closedPath);
 
-        // Now safe to unlink and drop the old pair.
-        m_pParser->UnlinkFromSink();
+        // 3) Unlink and drop the old pair. valve's src pad is now
+        //    unpeered; with valve.drop=true this is fine.
+        m_pValve->UnlinkFromSink();
         RemoveChild(oldContainer);
         RemoveChild(oldFileSink);
         m_pContainer = nullptr;
         m_pFileSink = nullptr;
 
-        // Attach the fakesink tail.
-        if (!_installFakeSink())
-        {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' Stop failed to install fakesink");
-            _releaseRotationBlock(pProbePad);
-            return false;
-        }
-
         m_isRecording = false;
-
-        _releaseRotationBlock(pProbePad);
 
         LOG_INFO("XRotatedFileSinkBintr '" << GetName()
             << "' stopped: closed '" << closedPath
-            << "' → fakesink absorbing until Start()");
+            << "' → valve holding upstream until Start()");
         return true;
     }
 
@@ -661,63 +618,60 @@ namespace DSL
             return true;
         }
 
-        GstPad* pProbePad = nullptr;
-        _installRotationBlock(pProbePad);
-        if (!pProbePad)
+        // B4-PIVOT: two paths into Start:
+        //  (a) stoppedInitially deploy — m_pContainer / m_pFileSink
+        //      still exist (linked from LinkAll, valve closed since
+        //      then). Just open the valve; the initial fragment
+        //      already has its filesink open.
+        //  (b) After Stop() — m_pContainer / m_pFileSink are nullptr.
+        //      Need to create a fresh pair, link valve→pair, sync,
+        //      open valve.
+
+        if (m_pContainer == nullptr)
         {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' Start could not acquire encoder src pad");
-            return false;
+            // Post-Stop path.
+            uint nextIndex = m_currentIndex + 1;
+            std::string nextPath = _renderFragmentPath(nextIndex);
+
+            DSL_ELEMENT_PTR newContainer;
+            DSL_ELEMENT_PTR newFileSink;
+            if (!_createChildPair(nextPath, newContainer, newFileSink))
+            {
+                LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
+                    << "' Start failed to create fresh mp4mux/filesink pair");
+                return false;
+            }
+            if (!m_pValve->LinkToSink(newContainer) or
+                !newContainer->LinkToSink(newFileSink))
+            {
+                LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
+                    << "' Start failed to link fresh pair to valve");
+                return false;
+            }
+            if (!gst_element_sync_state_with_parent(newContainer->GetGstElement()) or
+                !gst_element_sync_state_with_parent(newFileSink->GetGstElement()))
+            {
+                LOG_WARN("XRotatedFileSinkBintr '" << GetName()
+                    << "' sync_state_with_parent returned failure on Start pair");
+            }
+            m_pContainer = newContainer;
+            m_pFileSink = newFileSink;
+            m_currentIndex = nextIndex;
+            m_currentFragmentPath = nextPath;
+
+            _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
+                m_currentFragmentPath);
         }
+        // Else: stoppedInitially deploy — the pair is already linked
+        // from LinkAll (fragment 0). Just opening the valve makes it
+        // live; the fragment-opened for path 0 was already posted at
+        // LinkAll time.
 
-        // Detach fakesink.
-        _removeFakeSink();
-
-        // Compute next fragment path from the current index.
-        uint nextIndex = m_currentIndex + 1;
-        std::string nextPath = _renderFragmentPath(nextIndex);
-
-        // Create the fresh container/filesink pair.
-        DSL_ELEMENT_PTR newContainer;
-        DSL_ELEMENT_PTR newFileSink;
-        if (!_createChildPair(nextPath, newContainer, newFileSink))
-        {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' Start failed to create fresh mp4mux/filesink pair");
-            _releaseRotationBlock(pProbePad);
-            return false;
-        }
-
-        // Link parser → newContainer → newFileSink.
-        if (!m_pParser->LinkToSink(newContainer) or
-            !newContainer->LinkToSink(newFileSink))
-        {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' Start failed to link new pair");
-            _releaseRotationBlock(pProbePad);
-            return false;
-        }
-
-        // Sync state on the new elements so they enter PLAYING before we
-        // release the probe and buffers flow.
-        if (!gst_element_sync_state_with_parent(newContainer->GetGstElement()) or
-            !gst_element_sync_state_with_parent(newFileSink->GetGstElement()))
-        {
-            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
-                << "' sync_state_with_parent returned failure on Start pair");
-        }
-
-        m_pContainer = newContainer;
-        m_pFileSink = newFileSink;
-        m_currentIndex = nextIndex;
-        m_currentFragmentPath = nextPath;
+        // Open the valve — buffers flow to the container.
+        _setValveDrop(false);
         m_isRecording = true;
 
-        _postFragmentMessage(XROTATED_FILE_FRAGMENT_OPENED,
-            m_currentFragmentPath);
-
-        // Re-arm the auto-rotation timer if it was armed by
-        // SetMaxSizeTime.
+        // Re-arm auto-rotate if configured.
         if (m_maxSizeTimeNs > 0)
         {
             guint intervalMs =
@@ -729,11 +683,26 @@ namespace DSL
             }
         }
 
-        _releaseRotationBlock(pProbePad);
-
         LOG_INFO("XRotatedFileSinkBintr '" << GetName()
             << "' started: opened '" << m_currentFragmentPath << "'");
         return true;
+    }
+
+    // -------------------------------------------------------------------
+    // B4-PIVOT helper: set valve drop
+    // -------------------------------------------------------------------
+
+    void XRotatedFileSinkBintr::_setValveDrop(bool drop)
+    {
+        if (!m_pValve)
+        {
+            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
+                << "' _setValveDrop called with null valve");
+            return;
+        }
+        m_pValve->SetAttribute("drop", drop);
+        LOG_INFO("XRotatedFileSinkBintr '" << GetName()
+            << "' valve.drop = " << (drop ? "true" : "false"));
     }
 
     // -------------------------------------------------------------------
@@ -786,96 +755,9 @@ namespace DSL
         }
     }
 
-    bool XRotatedFileSinkBintr::_installFakeSink()
-    {
-        if (m_pFakeSink)
-        {
-            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
-                << "' _installFakeSink called while a fakesink is already"
-                << " installed — reusing existing");
-            return true;
-        }
-
-        char fakeSinkName[256];
-        std::snprintf(fakeSinkName, sizeof(fakeSinkName),
-            "%s-fakesink", GetName().c_str());
-
-        try
-        {
-            m_pFakeSink = DSL_ELEMENT_NEW("fakesink", fakeSinkName);
-        }
-        catch (...)
-        {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' failed to allocate fakesink");
-            m_pFakeSink = nullptr;
-            return false;
-        }
-
-        m_pFakeSink->SetAttribute("sync", false);
-        m_pFakeSink->SetAttribute("async", false);
-        m_pFakeSink->SetAttribute("qos", false);
-        m_pFakeSink->SetAttribute("enable-last-sample", false);
-
-        AddChild(m_pFakeSink);
-
-        // Link parser → fakesink with EXPLICIT h264 avc caps. Without
-        // the filter, h264parse's src pad negotiates with fakesink
-        // (which accepts anything) and commits to
-        // stream-format=byte-stream. When Start() later relinks parser
-        // to qtmux (which demands stream-format=avc), gst_element_link
-        // sees the caps mismatch and refuses.
-        //
-        // Bypass DSL's Nodetr::LinkToSink for this transient linkage:
-        // parser's Nodetr link-state stays "unlinked" so the future
-        // Start() can call DSL::LinkToSink(newContainer) without
-        // tripping the "already linked to Sink" pre-check.
-        GstCaps* caps = gst_caps_new_simple("video/x-h264",
-            "stream-format", G_TYPE_STRING, "avc",
-            "alignment", G_TYPE_STRING, "au",
-            NULL);
-        gboolean linked = gst_element_link_pads_filtered(
-            m_pParser->GetGstElement(), "src",
-            m_pFakeSink->GetGstElement(), "sink",
-            caps);
-        gst_caps_unref(caps);
-        if (!linked)
-        {
-            LOG_ERROR("XRotatedFileSinkBintr '" << GetName()
-                << "' failed to link parser → fakesink (filtered avc)");
-            RemoveChild(m_pFakeSink);
-            m_pFakeSink = nullptr;
-            return false;
-        }
-
-        if (!gst_element_sync_state_with_parent(m_pFakeSink->GetGstElement()))
-        {
-            LOG_WARN("XRotatedFileSinkBintr '" << GetName()
-                << "' sync_state_with_parent returned failure on fakesink");
-        }
-
-        return true;
-    }
-
-    void XRotatedFileSinkBintr::_removeFakeSink()
-    {
-        if (!m_pFakeSink)
-        {
-            return;
-        }
-        // NULL the fakesink FIRST (mirrors _finaliseChildPair
-        // ordering) so we unlink from a NULL peer.
-        gst_element_set_state(m_pFakeSink->GetGstElement(), GST_STATE_NULL);
-
-        // RemoveChild (gst_bin_remove) auto-unlinks the fakesink's pads
-        // as part of removing it from the bin — this is the same
-        // mechanism the rest of the DSL codebase relies on for element
-        // teardown. Explicit gst_element_unlink beforehand appears to
-        // leave stale peer state on parser's src pad that then blocks
-        // the subsequent LinkToSink(newContainer) in Start().
-        RemoveChild(m_pFakeSink);
-        m_pFakeSink = nullptr;
-    }
+    // B4-PIVOT: _installFakeSink and _removeFakeSink removed. The valve
+    // replaces the fakesink swap; parser is permanently linked to
+    // (queue→)valve and only the container/filesink pair moves.
 
     // -------------------------------------------------------------------
     // Private helpers
