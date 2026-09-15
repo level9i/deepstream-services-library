@@ -679,7 +679,17 @@ namespace DSL
         _setValveDrop(false);
         m_isRecording = true;
 
-        // Re-arm auto-rotate if configured.
+        // Re-arm auto-rotate if configured. Cancel any pre-existing
+        // timer FIRST — e.g. the one SetMaxSizeTime installed before
+        // LinkAll for a stoppedInitially deploy, which the ctor-time
+        // Set never got to cancel because Stop hadn't run yet. Without
+        // this, we'd leak the pre-existing timer and briefly have two
+        // periodic callbacks scheduled.
+        if (m_rotationTimerId)
+        {
+            g_source_remove(m_rotationTimerId);
+            m_rotationTimerId = 0;
+        }
         if (m_maxSizeTimeNs > 0)
         {
             guint intervalMs =
