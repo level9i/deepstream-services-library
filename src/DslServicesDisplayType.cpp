@@ -1135,14 +1135,146 @@ namespace DSL
         }
         catch(...)
         {
-            LOG_ERROR("RGBA Text '" << name 
+            LOG_ERROR("RGBA Text '" << name
                 << "' threw exception adding shadow");
             return DSL_RESULT_DISPLAY_TYPE_THREW_EXCEPTION;
         }
     }
-            
-            
-    DslReturnType Services::DisplayTypeMetaAdd(const char* name, 
+
+    DslReturnType Services::DisplayTypeRgbaTextStringSet(const char* name,
+        const char* text)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_DISPLAY_TYPE_NAME_NOT_FOUND(m_displayTypes, name);
+            DSL_RETURN_IF_DISPLAY_TYPE_IS_NOT_CORRECT_TYPE(m_displayTypes,
+                name, RgbaText);
+
+            DSL_RGBA_TEXT_PTR pText =
+                std::dynamic_pointer_cast<RgbaText>(m_displayTypes[name]);
+
+            pText->SetString(text);
+
+            LOG_INFO("RGBA Text '" << name
+                << "' string updated successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("RGBA Text '" << name
+                << "' threw exception setting string");
+            return DSL_RESULT_DISPLAY_TYPE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::DisplayTypeRgbaTextOffsetsSet(const char* name,
+        uint xOffset, uint yOffset)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_DISPLAY_TYPE_NAME_NOT_FOUND(m_displayTypes, name);
+            DSL_RETURN_IF_DISPLAY_TYPE_IS_NOT_CORRECT_TYPE(m_displayTypes,
+                name, RgbaText);
+
+            DSL_RGBA_TEXT_PTR pText =
+                std::dynamic_pointer_cast<RgbaText>(m_displayTypes[name]);
+
+            pText->SetOffsets(xOffset, yOffset);
+
+            LOG_INFO("RGBA Text '" << name
+                << "' offsets updated successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("RGBA Text '" << name
+                << "' threw exception setting offsets");
+            return DSL_RESULT_DISPLAY_TYPE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::DisplayTypeRgbaTextFontSet(const char* name,
+        const char* font)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_DISPLAY_TYPE_NAME_NOT_FOUND(m_displayTypes, name);
+            DSL_RETURN_IF_DISPLAY_TYPE_IS_NOT_CORRECT_TYPE(m_displayTypes,
+                name, RgbaText);
+
+            DSL_RETURN_IF_DISPLAY_TYPE_NAME_NOT_FOUND(m_displayTypes, font);
+            DSL_RETURN_IF_DISPLAY_TYPE_IS_NOT_CORRECT_TYPE(m_displayTypes,
+                font, RgbaFont);
+
+            DSL_RGBA_TEXT_PTR pText =
+                std::dynamic_pointer_cast<RgbaText>(m_displayTypes[name]);
+            DSL_RGBA_FONT_PTR pFont =
+                std::dynamic_pointer_cast<RgbaFont>(m_displayTypes[font]);
+
+            pText->SetFont(pFont);
+
+            LOG_INFO("RGBA Text '" << name
+                << "' font updated to '" << font << "' successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("RGBA Text '" << name
+                << "' threw exception setting font");
+            return DSL_RESULT_DISPLAY_TYPE_THREW_EXCEPTION;
+        }
+    }
+
+    DslReturnType Services::DisplayTypeRgbaTextBgColorSet(const char* name,
+        const char* bgColor)
+    {
+        LOG_FUNC();
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_servicesMutex);
+
+        try
+        {
+            DSL_RETURN_IF_DISPLAY_TYPE_NAME_NOT_FOUND(m_displayTypes, name);
+            DSL_RETURN_IF_DISPLAY_TYPE_IS_NOT_CORRECT_TYPE(m_displayTypes,
+                name, RgbaText);
+
+            DSL_RETURN_IF_DISPLAY_TYPE_NAME_NOT_FOUND(m_displayTypes, bgColor);
+            DSL_RETURN_IF_DISPLAY_TYPE_IS_NOT_COLOR(m_displayTypes, bgColor);
+
+            DSL_RGBA_TEXT_PTR pText =
+                std::dynamic_pointer_cast<RgbaText>(m_displayTypes[name]);
+            DSL_RGBA_COLOR_PTR pBgColor =
+                std::dynamic_pointer_cast<RgbaColor>(m_displayTypes[bgColor]);
+
+            pText->SetBgColor(pBgColor);
+
+            LOG_INFO("RGBA Text '" << name
+                << "' background colour updated to '" << bgColor
+                << "' successfully");
+
+            return DSL_RESULT_SUCCESS;
+        }
+        catch(...)
+        {
+            LOG_ERROR("RGBA Text '" << name
+                << "' threw exception setting background colour");
+            return DSL_RESULT_DISPLAY_TYPE_THREW_EXCEPTION;
+        }
+    }
+
+
+    DslReturnType Services::DisplayTypeMetaAdd(const char* name,
         void* pDisplayMeta, void* pFrameMeta)
     {
         LOG_FUNC();

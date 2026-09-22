@@ -688,6 +688,335 @@ SCENARIO( "A new RGBA Text can be created and deleted", "[display-types-api]" )
     }
 }
 
+SCENARIO( "An RGBA Text's string can be updated after creation", "[display-types-api]" )
+{
+    GIVEN( "An RGBA Text created with an initial string" )
+    {
+        std::wstring textName(L"display-text");
+        std::wstring initialText(L"initial");
+        std::wstring newText(L"updated");
+        uint xOffset(100), yOffset(100);
+
+        std::wstring fontName(L"arial-20");
+        std::wstring font(L"arial");
+        uint size(20);
+
+        std::wstring colorName(L"my-color");
+        double red(0.12), green(0.34), blue(0.56), alpha(0.78);
+
+        REQUIRE( dsl_display_type_rgba_color_custom_new(colorName.c_str(),
+            red, green, blue, alpha) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_font_new(fontName.c_str(), font.c_str(),
+            size, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_text_new(textName.c_str(),
+            initialText.c_str(), xOffset, yOffset, fontName.c_str(),
+            false, NULL) == DSL_RESULT_SUCCESS );
+
+        WHEN( "The string is updated with a new value" )
+        {
+            REQUIRE( dsl_display_type_rgba_text_string_set(textName.c_str(),
+                newText.c_str()) == DSL_RESULT_SUCCESS );
+
+            THEN( "The update succeeds and the Text can be deleted" )
+            {
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The string setter is called on an unknown name" )
+        {
+            std::wstring bogusName(L"no-such-text");
+
+            THEN( "NAME_NOT_FOUND is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_string_set(bogusName.c_str(),
+                    newText.c_str()) == DSL_RESULT_DISPLAY_TYPE_NAME_NOT_FOUND );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The string setter is called on a non-Text Display Type" )
+        {
+            std::wstring lineName(L"a-line");
+            REQUIRE( dsl_display_type_rgba_line_new(lineName.c_str(),
+                10, 10, 20, 20, 2, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+            THEN( "NOT_THE_CORRECT_TYPE is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_string_set(lineName.c_str(),
+                    newText.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NOT_THE_CORRECT_TYPE );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+    }
+}
+
+SCENARIO( "An RGBA Text's offsets can be updated after creation", "[display-types-api]" )
+{
+    GIVEN( "An RGBA Text created with initial offsets" )
+    {
+        std::wstring textName(L"display-text");
+        std::wstring text(L"some text");
+        uint xOffset(100), yOffset(100);
+        uint newXOffset(250), newYOffset(300);
+
+        std::wstring fontName(L"arial-20");
+        std::wstring font(L"arial");
+        uint size(20);
+
+        std::wstring colorName(L"my-color");
+        double red(0.12), green(0.34), blue(0.56), alpha(0.78);
+
+        REQUIRE( dsl_display_type_rgba_color_custom_new(colorName.c_str(),
+            red, green, blue, alpha) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_font_new(fontName.c_str(), font.c_str(),
+            size, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_text_new(textName.c_str(), text.c_str(),
+            xOffset, yOffset, fontName.c_str(), false, NULL) == DSL_RESULT_SUCCESS );
+
+        WHEN( "The offsets are updated with new values" )
+        {
+            REQUIRE( dsl_display_type_rgba_text_offsets_set(textName.c_str(),
+                newXOffset, newYOffset) == DSL_RESULT_SUCCESS );
+
+            THEN( "The update succeeds and the Text can be deleted" )
+            {
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The offsets setter is called on an unknown name" )
+        {
+            std::wstring bogusName(L"no-such-text");
+
+            THEN( "NAME_NOT_FOUND is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_offsets_set(bogusName.c_str(),
+                    newXOffset, newYOffset) ==
+                        DSL_RESULT_DISPLAY_TYPE_NAME_NOT_FOUND );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The offsets setter is called on a non-Text Display Type" )
+        {
+            std::wstring lineName(L"a-line");
+            REQUIRE( dsl_display_type_rgba_line_new(lineName.c_str(),
+                10, 10, 20, 20, 2, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+            THEN( "NOT_THE_CORRECT_TYPE is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_offsets_set(lineName.c_str(),
+                    newXOffset, newYOffset) ==
+                        DSL_RESULT_DISPLAY_TYPE_NOT_THE_CORRECT_TYPE );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+    }
+}
+
+SCENARIO( "An RGBA Text's font can be swapped after creation", "[display-types-api]" )
+{
+    GIVEN( "An RGBA Text and a second RGBA Font ready to swap in" )
+    {
+        std::wstring textName(L"display-text");
+        std::wstring text(L"some text");
+        uint xOffset(100), yOffset(100);
+
+        std::wstring fontName(L"arial-20");
+        std::wstring font(L"arial");
+        uint size(20);
+
+        std::wstring altFontName(L"arial-30-alt");
+        uint altSize(30);
+
+        std::wstring colorName(L"my-color");
+        std::wstring altColorName(L"my-alt-color");
+        double red(0.12), green(0.34), blue(0.56), alpha(0.78);
+
+        REQUIRE( dsl_display_type_rgba_color_custom_new(colorName.c_str(),
+            red, green, blue, alpha) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_color_custom_new(altColorName.c_str(),
+            1.0, 0.0, 0.0, 1.0) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_font_new(fontName.c_str(), font.c_str(),
+            size, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_font_new(altFontName.c_str(), font.c_str(),
+            altSize, altColorName.c_str()) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_text_new(textName.c_str(), text.c_str(),
+            xOffset, yOffset, fontName.c_str(), false, NULL) == DSL_RESULT_SUCCESS );
+
+        WHEN( "The font is swapped for the alt font" )
+        {
+            REQUIRE( dsl_display_type_rgba_text_font_set(textName.c_str(),
+                altFontName.c_str()) == DSL_RESULT_SUCCESS );
+
+            THEN( "The swap succeeds and the Text can be deleted" )
+            {
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The font setter is called on an unknown text name" )
+        {
+            std::wstring bogusName(L"no-such-text");
+
+            THEN( "NAME_NOT_FOUND is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_font_set(bogusName.c_str(),
+                    altFontName.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NAME_NOT_FOUND );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The font setter is called with an unknown font name" )
+        {
+            std::wstring bogusFont(L"no-such-font");
+
+            THEN( "NAME_NOT_FOUND is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_font_set(textName.c_str(),
+                    bogusFont.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NAME_NOT_FOUND );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The font setter is called on a non-Text Display Type" )
+        {
+            std::wstring lineName(L"a-line");
+            REQUIRE( dsl_display_type_rgba_line_new(lineName.c_str(),
+                10, 10, 20, 20, 2, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+            THEN( "NOT_THE_CORRECT_TYPE is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_font_set(lineName.c_str(),
+                    altFontName.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NOT_THE_CORRECT_TYPE );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The font setter is called with a non-Font second argument" )
+        {
+            std::wstring lineName(L"a-line");
+            REQUIRE( dsl_display_type_rgba_line_new(lineName.c_str(),
+                10, 10, 20, 20, 2, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+            THEN( "NOT_THE_CORRECT_TYPE is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_font_set(textName.c_str(),
+                    lineName.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NOT_THE_CORRECT_TYPE );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+    }
+}
+
+SCENARIO( "An RGBA Text's background colour can be updated after creation", "[display-types-api]" )
+{
+    GIVEN( "An RGBA Text with a background colour and an alt colour ready to swap in" )
+    {
+        std::wstring textName(L"display-text");
+        std::wstring text(L"some text");
+        uint xOffset(100), yOffset(100);
+
+        std::wstring fontName(L"arial-20");
+        std::wstring font(L"arial");
+        uint size(20);
+
+        std::wstring colorName(L"my-color");
+        std::wstring altBgColorName(L"my-alt-bg-color");
+        double red(0.12), green(0.34), blue(0.56), alpha(0.78);
+
+        REQUIRE( dsl_display_type_rgba_color_custom_new(colorName.c_str(),
+            red, green, blue, alpha) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_color_custom_new(altBgColorName.c_str(),
+            1.0, 0.0, 0.0, 1.0) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_font_new(fontName.c_str(), font.c_str(),
+            size, colorName.c_str()) == DSL_RESULT_SUCCESS );
+
+        REQUIRE( dsl_display_type_rgba_text_new(textName.c_str(), text.c_str(),
+            xOffset, yOffset, fontName.c_str(), true, colorName.c_str())
+                == DSL_RESULT_SUCCESS );
+
+        WHEN( "The background colour is swapped for the alt colour" )
+        {
+            REQUIRE( dsl_display_type_rgba_text_bg_color_set(textName.c_str(),
+                altBgColorName.c_str()) == DSL_RESULT_SUCCESS );
+
+            THEN( "The swap succeeds and the Text can be deleted" )
+            {
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The bg colour setter is called on an unknown text name" )
+        {
+            std::wstring bogusName(L"no-such-text");
+
+            THEN( "NAME_NOT_FOUND is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_bg_color_set(bogusName.c_str(),
+                    altBgColorName.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NAME_NOT_FOUND );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The bg colour setter is called with an unknown colour name" )
+        {
+            std::wstring bogusColor(L"no-such-colour");
+
+            THEN( "NAME_NOT_FOUND is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_bg_color_set(textName.c_str(),
+                    bogusColor.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NAME_NOT_FOUND );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+        WHEN( "The bg colour setter is called with a name that resolves to a non-Colour type" )
+        {
+            THEN( "NOT_THE_CORRECT_TYPE is returned" )
+            {
+                REQUIRE( dsl_display_type_rgba_text_bg_color_set(textName.c_str(),
+                    fontName.c_str()) ==
+                        DSL_RESULT_DISPLAY_TYPE_NOT_THE_CORRECT_TYPE );
+
+                REQUIRE( dsl_display_type_delete_all() == DSL_RESULT_SUCCESS );
+                REQUIRE( dsl_display_type_list_size() == 0 );
+            }
+        }
+    }
+}
+
 SCENARIO( "A new RGBA Line can be created and deleted", "[display-types-api]" )
 {
     GIVEN( "Attributes for a new RGBA Line" ) 

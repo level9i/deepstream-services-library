@@ -145,10 +145,22 @@ namespace DSL {
             uint xOffset, uint yOffset, const char* font, 
             boolean hasBgColor, const char* bgColor);
 
-        DslReturnType DisplayRgbaTextShadowAdd(const char* name, 
+        DslReturnType DisplayRgbaTextShadowAdd(const char* name,
             uint xOffset, uint yOffset, const char* color);
-            
-        DslReturnType DisplayTypeMetaAdd(const char* name, 
+
+        DslReturnType DisplayTypeRgbaTextStringSet(const char* name,
+            const char* text);
+
+        DslReturnType DisplayTypeRgbaTextOffsetsSet(const char* name,
+            uint xOffset, uint yOffset);
+
+        DslReturnType DisplayTypeRgbaTextFontSet(const char* name,
+            const char* font);
+
+        DslReturnType DisplayTypeRgbaTextBgColorSet(const char* name,
+            const char* bgColor);
+
+        DslReturnType DisplayTypeMetaAdd(const char* name,
         void* pDisplayMeta, void* pFrameMeta);
         
         DslReturnType DisplayTypeDelete(const char* name);

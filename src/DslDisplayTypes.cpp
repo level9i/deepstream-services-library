@@ -405,10 +405,10 @@ namespace DSL
     bool RgbaText::AddShadow(uint xOffset, uint yOffset, DSL_RGBA_COLOR_PTR pColor)
     {
         LOG_FUNC();
-        
+
         if (m_shadowEnabled)
         {
-            LOG_ERROR("Shadow is already enabled for RgbaText '" << 
+            LOG_ERROR("Shadow is already enabled for RgbaText '" <<
                 GetName() << "'");
             return false;
         }
@@ -416,14 +416,40 @@ namespace DSL
         m_shadowXOffset = xOffset;
         m_shadowYOffset = yOffset;
         m_pShadowColor = pColor;
-        
-        m_pShadowFont = DSL_RGBA_FONT_NEW("", 
+
+        m_pShadowFont = DSL_RGBA_FONT_NEW("",
             m_pFont->m_fontName.c_str(), m_pFont->font_size, m_pShadowColor);
-            
+
         return true;
     }
-    
-    void RgbaText::AddMeta(std::vector<NvDsDisplayMeta*>& displayMetaData, 
+
+    void RgbaText::SetString(const char* text)
+    {
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_propertyMutex);
+        m_text.assign(text);
+    }
+
+    void RgbaText::SetOffsets(uint xOffset, uint yOffset)
+    {
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_propertyMutex);
+        x_offset = xOffset;
+        y_offset = yOffset;
+    }
+
+    void RgbaText::SetFont(DSL_RGBA_FONT_PTR pFont)
+    {
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_propertyMutex);
+        m_pFont = pFont;
+    }
+
+    void RgbaText::SetBgColor(DSL_RGBA_COLOR_PTR pBgColor)
+    {
+        LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_propertyMutex);
+        m_pBgColor = pBgColor;
+        set_bg_clr = true;
+    }
+
+    void RgbaText::AddMeta(std::vector<NvDsDisplayMeta*>& displayMetaData,
         NvDsFrameMeta* pFrameMeta) 
     {
 //        LOG_FUNC();

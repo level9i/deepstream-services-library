@@ -490,15 +490,49 @@ namespace DSL
         bool AddShadow(uint xOffset, uint yOffset, DSL_RGBA_COLOR_PTR pColor);
 
         /**
+         * @brief Replaces the text string, picked up on the next render.
+         * Guarded by the DisplayType property mutex.
+         * @param[in] text new text string.
+         */
+        void SetString(const char* text);
+
+        /**
+         * @brief Replaces the x/y offsets, picked up on the next render.
+         * Guarded by the DisplayType property mutex.
+         * @param[in] xOffset new x positional offset.
+         * @param[in] yOffset new y positional offset.
+         */
+        void SetOffsets(uint xOffset, uint yOffset);
+
+        /**
+         * @brief Replaces the RGBA Font, picked up on the next render.
+         * Since RgbaText has no colour of its own — it is carried by
+         * the font — this is also how the text colour is changed at
+         * runtime. Guarded by the DisplayType property mutex.
+         * @param[in] pFont new RGBA Font.
+         */
+        void SetFont(DSL_RGBA_FONT_PTR pFont);
+
+        /**
+         * @brief Replaces the background RGBA Color and forces the
+         * background flag (NvOSD_TextParams::set_bg_clr) on. Semantic
+         * is "give this text a background of this colour", so calling
+         * this setter enables the background if it was disabled.
+         * Guarded by the DisplayType property mutex.
+         * @param[in] pBgColor new background RGBA Color.
+         */
+        void SetBgColor(DSL_RGBA_COLOR_PTR pBgColor);
+
+        /**
          * @brief Adds the Display Type's meta to the provided displayMetaData
-         * @param displayMetaData vector of allocated Display metadata to add 
+         * @param displayMetaData vector of allocated Display metadata to add
          * the meta to
-         * @param pFrameMeta frame meta for the frame the display meta 
+         * @param pFrameMeta frame meta for the frame the display meta
          * will be added to.
          */
-        void AddMeta(std::vector<NvDsDisplayMeta*>& displayMetaData, 
+        void AddMeta(std::vector<NvDsDisplayMeta*>& displayMetaData,
             NvDsFrameMeta* pFrameMeta);
-        
+
         std::string m_text;
         
     private:

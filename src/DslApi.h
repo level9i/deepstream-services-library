@@ -2231,9 +2231,64 @@ DslReturnType dsl_display_type_source_dimensions_new(const wchar_t* name,
  * @return DSL_RESULT_SUCCESS on successful creation, one of 
  * DSL_RESULT_DISPLAY_TYPE_RESULT otherwise.
  */
-DslReturnType dsl_display_type_rgba_text_shadow_add(const wchar_t* name, 
+DslReturnType dsl_display_type_rgba_text_shadow_add(const wchar_t* name,
     uint x_offset, uint y_offset, const wchar_t* color);
-    
+
+/**
+ * @brief Sets the text string for an existing RGBA Text Display Type. Supports
+ * runtime mutation of the displayed text (e.g. clock readouts, live counters,
+ * status indicators) — the new string is picked up on the next frame render.
+ * Mutation is guarded by the DisplayType property mutex.
+ * @param[in] name unique name of the RGBA Text to update.
+ * @param[in] text new text string to display.
+ * @return DSL_RESULT_SUCCESS on successful update, one of
+ * DSL_RESULT_DISPLAY_TYPE_RESULT otherwise.
+ */
+DslReturnType dsl_display_type_rgba_text_string_set(const wchar_t* name,
+    const wchar_t* text);
+
+/**
+ * @brief Sets the x/y offsets for an existing RGBA Text Display Type. Supports
+ * runtime repositioning of a text slot — the new offsets are picked up on the
+ * next frame render. Mutation is guarded by the DisplayType property mutex.
+ * @param[in] name unique name of the RGBA Text to update.
+ * @param[in] x_offset new x positional offset.
+ * @param[in] y_offset new y positional offset.
+ * @return DSL_RESULT_SUCCESS on successful update, one of
+ * DSL_RESULT_DISPLAY_TYPE_RESULT otherwise.
+ */
+DslReturnType dsl_display_type_rgba_text_offsets_set(const wchar_t* name,
+    uint x_offset, uint y_offset);
+
+/**
+ * @brief Sets the RGBA Font for an existing RGBA Text Display Type. Since
+ * the text's foreground colour is carried by its RgbaFont (RgbaText has no
+ * colour of its own — see the ctor), this is also the primitive for changing
+ * the text colour at runtime: pre-create one RgbaFont per desired
+ * colour/size/family and swap between them via this setter. Mutation is
+ * guarded by the DisplayType property mutex.
+ * @param[in] name unique name of the RGBA Text to update.
+ * @param[in] font name of an existing RGBA Font to switch to.
+ * @return DSL_RESULT_SUCCESS on successful update, one of
+ * DSL_RESULT_DISPLAY_TYPE_RESULT otherwise.
+ */
+DslReturnType dsl_display_type_rgba_text_font_set(const wchar_t* name,
+    const wchar_t* font);
+
+/**
+ * @brief Sets the background RGBA Color for an existing RGBA Text Display
+ * Type. Also enables the background (set_bg_clr = true) if it was not
+ * already — the semantic is "give this text a background of this colour".
+ * If the text was created without a background, calling this setter turns
+ * the background on. Mutation is guarded by the DisplayType property mutex.
+ * @param[in] name unique name of the RGBA Text to update.
+ * @param[in] bg_color name of an existing RGBA Color to use as background.
+ * @return DSL_RESULT_SUCCESS on successful update, one of
+ * DSL_RESULT_DISPLAY_TYPE_RESULT otherwise.
+ */
+DslReturnType dsl_display_type_rgba_text_bg_color_set(const wchar_t* name,
+    const wchar_t* bg_color);
+
 ///**
 // * @brief Adds a named Display Type (text/shape) to a frames's display metadata, The caller 
 // * is responsible for aquiring the display metadata for the current frame.
