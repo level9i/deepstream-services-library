@@ -1018,12 +1018,25 @@ namespace DSL
         LOCK_MUTEX_FOR_CURRENT_SCOPE(&m_propertyMutex);
 
         if (m_enabled and pObjectMeta)
-        {   
-            std::string label;
-            
-            // Free up the existing label memory, and reallocate to ensure suffcient size
+        {
+            // Free whatever label memory was previously set.
             g_free(pObjectMeta->text_params.display_text);
-            pObjectMeta->text_params.display_text = 
+
+            // Empty content list → suppress the per-object label entirely.
+            // nvdsosd renders obj_meta.text_params based on display_text
+            // being non-null (not on strlen > 0), so an empty-but-allocated
+            // buffer still draws the text background rectangle. Set
+            // display_text to NULL and clear set_bg_clr so nvdsosd skips
+            // text + background for this object.
+            if (m_contentTypes.empty())
+            {
+                pObjectMeta->text_params.display_text = NULL;
+                pObjectMeta->text_params.set_bg_clr = false;
+                return;
+            }
+
+            std::string label;
+            pObjectMeta->text_params.display_text =
                 (gchar*) g_malloc0(MAX_DISPLAY_LEN);
 
             for (auto const &iter: m_contentTypes)
