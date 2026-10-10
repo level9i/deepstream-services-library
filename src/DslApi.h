@@ -10223,6 +10223,47 @@ DslReturnType dsl_info_log_function_restore();
  */
 void* dsl_gst_buffer_get_nvds_batch_meta(void* gst_buffer);
 
+/**
+ * @brief Thin FFI utility that mutates an `NvDsObjectMeta`'s
+ * `text_params.display_text` slot — enables JS-side composition of
+ * per-object label content via a `dsl_pph_custom_new` callback
+ * without re-implementing the g_free / g_malloc0 / memcpy dance
+ * from `CustomizeLabelOdeAction::HandleOccurrence` across the FFI
+ * boundary.
+ *
+ * **Behaviour:**
+ * - If `text` is NULL or empty: g_frees the existing `display_text`
+ *   (safe on NULL), sets `display_text` to NULL, and clears
+ *   `text_params.set_bg_clr` so nvdsosd skips rendering this
+ *   object's text + background entirely.
+ * - Otherwise: g_frees the existing `display_text`, g_malloc0's a
+ *   fresh `MAX_DISPLAY_LEN`-byte buffer, memcpy's up to
+ *   `MAX_DISPLAY_LEN - 1` bytes from `text`. nvdsosd reads the
+ *   buffer downstream; the NEXT setter (this call again, or the
+ *   nvdsosd release path) owns the free.
+ *
+ * Mirrors the memory discipline used by
+ * `CustomizeLabelOdeAction::HandleOccurrence` in `DslOdeAction.cpp`.
+ * Call ONLY from inside a pad-probe callback that holds a live
+ * `NvDsObjectMeta *` — the pointer is valid only for the duration
+ * of that callback.
+ *
+ * Added 2026-10-10 for BL-241 (splish LabelCustomizer function-path
+ * substrate) — see
+ * `splish/.cortex/state/backlog/BL-241.yaml`.
+ *
+ * @param[in] object_meta raw `NvDsObjectMeta *` from a Custom PPH
+ * callback (obtained by walking `NvDsBatchMeta.frame_meta_list.obj_meta_list`)
+ * @param[in] text the text to display (wide string, up to
+ * `MAX_DISPLAY_LEN - 1` narrow bytes after conversion), or NULL /
+ * empty to clear the slot — matches the `wchar_t *` convention of
+ * every other DSL string-taking API
+ * @return `DSL_RESULT_SUCCESS` on success,
+ * `DSL_RESULT_INVALID_INPUT_PARAM` when `object_meta` is NULL
+ */
+DslReturnType dsl_object_meta_display_text_set(void* object_meta,
+    const wchar_t* text);
+
 
 EXTERN_C_END
 

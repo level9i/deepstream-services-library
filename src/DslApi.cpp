@@ -11982,3 +11982,45 @@ void* dsl_gst_buffer_get_nvds_batch_meta(void* gst_buffer)
     return (void*) gst_buffer_get_nvds_batch_meta((GstBuffer*) gst_buffer);
 }
 
+DslReturnType dsl_object_meta_display_text_set(void* object_meta,
+    const wchar_t* text)
+{
+    RETURN_IF_PARAM_IS_NULL(object_meta);
+
+    NvDsObjectMeta* pObjectMeta = (NvDsObjectMeta*) object_meta;
+
+    // Free whatever label memory was previously set (safe on NULL —
+    // g_free is a no-op on NULL per glib contract).
+    g_free(pObjectMeta->text_params.display_text);
+
+    // NULL or empty text → clear the slot. nvdsosd renders
+    // obj_meta.text_params based on display_text being non-null, so
+    // setting NULL + disabling set_bg_clr makes nvdsosd skip both
+    // the text and its background rectangle for this object. Mirrors
+    // the empty-content branch of CustomizeLabelOdeAction::HandleOccurrence.
+    if (text == NULL || text[0] == L'\0')
+    {
+        pObjectMeta->text_params.display_text = NULL;
+        pObjectMeta->text_params.set_bg_clr = false;
+        return DSL_RESULT_SUCCESS;
+    }
+
+    // Convert wchar_t* to narrow string, matching the convention used
+    // by every other DSL string-taking API (see e.g.
+    // dsl_display_type_rgba_text_string_set in this file). This is a
+    // byte-wise narrow of each wchar — correct for ASCII; full Unicode
+    // handling in display_text is out of scope for this helper.
+    std::wstring wstrText(text);
+    std::string cstrText(wstrText.begin(), wstrText.end());
+
+    // Non-empty text → g_malloc0 a fresh buffer and memcpy up to
+    // MAX_DISPLAY_LEN - 1 bytes (leaving the final byte zero so the
+    // buffer is NUL-terminated regardless of input length). nvdsosd
+    // (or the next call to this setter) will g_free the buffer.
+    pObjectMeta->text_params.display_text =
+        (gchar*) g_malloc0(MAX_DISPLAY_LEN);
+    cstrText.copy(pObjectMeta->text_params.display_text,
+        MAX_DISPLAY_LEN - 1, 0);
+    return DSL_RESULT_SUCCESS;
+}
+
