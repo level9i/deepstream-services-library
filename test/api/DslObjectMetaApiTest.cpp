@@ -147,7 +147,7 @@ SCENARIO( "dsl_object_meta_display_text_set clears display_text on empty text",
         NvDsObjectMeta objectMeta = {};
         objectMeta.text_params.set_bg_clr = true;
 
-        REQUIRE( dsl_object_meta_display_text_set(&objectMeta, "stale text")
+        REQUIRE( dsl_object_meta_display_text_set(&objectMeta, L"stale text")
             == DSL_RESULT_SUCCESS );
         REQUIRE( objectMeta.text_params.display_text != NULL );
 
@@ -172,7 +172,7 @@ SCENARIO( "dsl_object_meta_display_text_set frees the previous allocation before
     {
         NvDsObjectMeta objectMeta = {};
 
-        REQUIRE( dsl_object_meta_display_text_set(&objectMeta, "first text")
+        REQUIRE( dsl_object_meta_display_text_set(&objectMeta, L"first text")
             == DSL_RESULT_SUCCESS );
         REQUIRE( objectMeta.text_params.display_text != NULL );
         REQUIRE( std::strcmp(objectMeta.text_params.display_text, "first text") == 0 );
@@ -181,7 +181,7 @@ SCENARIO( "dsl_object_meta_display_text_set frees the previous allocation before
         {
             // The function must g_free the first allocation internally and
             // replace it with a fresh g_malloc0'd buffer carrying the new text.
-            REQUIRE( dsl_object_meta_display_text_set(&objectMeta, "second text")
+            REQUIRE( dsl_object_meta_display_text_set(&objectMeta, L"second text")
                 == DSL_RESULT_SUCCESS );
 
             THEN( "display_text carries the second text (no leak observable at the API boundary)" )
